@@ -14,3 +14,20 @@
 - Bundled schemas: review-findings, verdict, task-report, patch-plan
   (strict-mode compatible, shared shape with cdx).
 - Verified against Claude Code 2.1.207 and codex-cli 0.144.0.
+
+## 0.2.0 (2026-07-11)
+
+- Hidden-flag research pass against the official CLI reference
+  (code.claude.com/docs/en/cli-reference — which confirms `--help` is
+  incomplete), the env-vars reference, and a strings-dump of the
+  2.1.207 binary. Flag map rebuilt: `--max-turns` (now a runner flag,
+  verified live), `--advisor`, `--cloud`/`--teleport`,
+  `--bg --exec`, `--init`/`--init-only`/`--maintenance`,
+  `--append-subagent-system-prompt`, `--permission-prompt-tool`,
+  background-session subcommands, key env vars, and a
+  present-in-binary-but-undocumented list.
+- driving-claude: Background & cloud section (`--bg`, `claude agents`,
+  `--cloud`, `--teleport`).
+- prompting-claude deepened with three reference files: prompt blocks,
+  end-to-end recipes, and anti-patterns (Claude-tuned).
+- Plugin directory assets: logo + composer icon.

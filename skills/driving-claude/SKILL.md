@@ -59,6 +59,8 @@ kill a run mid-flight just because it is slow — check the artifacts.
   (they cannot be resumed).
 - **--budget <usd>**: hard dollar cap for a run. Use for open-ended
   research runs or when the user mentions cost.
+- **--max-turns <n>**: cap agentic turns (run errors at the limit).
+  The other cost brake — good for probes and bounded checks.
 - **--add-dir <d>**: extra directories Claude may touch (repeatable).
 - **--cd <dir>**: working directory for the run (sessions are scoped
   per directory — resume must use the same `--cd`).
@@ -99,6 +101,15 @@ scopes stated in the prompt — or `--sandbox ro` angles that only
 report. Collect all outputs, then synthesize: agree/disagree, dedupe
 findings, pick the best implementation. 2–4 workers is the sweet spot.
 See the claude-fleet skill.
+
+## Background & cloud
+
+For work the user wants detached from this conversation: `claude --bg
+"<task>"` starts a background session (manage with `claude agents
+--json`, `claude logs/stop/respawn <id>`); `claude --cloud "<task>"`
+creates a Claude Code web session on claude.ai; `claude --teleport`
+pulls a web session back to local. These bypass the runner contract —
+use them deliberately, report the session id, and don't wait on them.
 
 ## Acting on results
 

@@ -1,6 +1,6 @@
 {
   "name": "cld",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Full-surface Claude Code integration for Codex: delegate, review, fan out, resume, and act on structured Claude results. Codex drives claude directly — no middleman runtime.",
   "author": {
     "name": "Nuko Nova Dynamics",
@@ -19,6 +19,8 @@
     "category": "Developer Tools",
     "capabilities": ["Read", "Write"],
     "websiteURL": "https://github.com/nuko-nova-dynamics/cld",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png",
     "defaultPrompt": [
       "Get a second opinion from Claude on this diff",
       "Delegate this implementation to Claude, then review its work"

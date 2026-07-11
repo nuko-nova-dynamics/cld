@@ -34,7 +34,7 @@ function die(msg) {
   process.stderr.write(
     "usage: claude-run.mjs --sandbox <ro|write|full> [--model <m>] [--effort <low|medium|high|xhigh|max>] " +
       "[--schema <path>] [--resume <id|last>] [--fork] [--session-id <uuid>] [--name <s>] " +
-      "[--ephemeral] [--budget <usd>] [--fallback-model <m,...>] " +
+      "[--ephemeral] [--budget <usd>] [--max-turns <n>] [--fallback-model <m,...>] " +
       "[--agent <name>] [--agents <json>] [--tools <list>] [--allow <tools>] [--deny <tools>] " +
       "[--mcp-config <f-or-json>]... [--strict-mcp-config] [--betas <b,...>] " +
       "[--add-dir <d>]... [--cd <dir>] [--worktree <name>] " +
@@ -79,6 +79,8 @@ function parseArgs(argv) {
       o.ephemeral = true;
     } else if (a === "--budget") {
       o.budget = next(a);
+    } else if (a === "--max-turns") {
+      o.maxTurns = next(a);
     } else if (a === "--fallback-model") {
       o.fallbackModel = next(a);
     } else if (a === "--agent") {
@@ -175,6 +177,7 @@ if (opts.sessionId) argv.push("--session-id", opts.sessionId);
 if (opts.name) argv.push("--name", opts.name);
 if (opts.ephemeral) argv.push("--no-session-persistence");
 if (opts.budget) argv.push("--max-budget-usd", opts.budget);
+if (opts.maxTurns) argv.push("--max-turns", opts.maxTurns);
 if (opts.fallbackModel) argv.push("--fallback-model", opts.fallbackModel);
 if (opts.agent) argv.push("--agent", opts.agent);
 if (opts.agents) argv.push("--agents", opts.agents);

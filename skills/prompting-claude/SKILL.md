@@ -42,7 +42,11 @@ Resume follow-ups (`--resume <id>`): send only the delta instruction.
 Claude retains full session context; restating the task wastes tokens
 and can cause re-work.
 
-Anti-patterns:
+Reusable blocks: [references/prompt-blocks.md](references/prompt-blocks.md).
+End-to-end templates: [references/claude-prompt-recipes.md](references/claude-prompt-recipes.md).
+Failure modes: [references/claude-prompt-antipatterns.md](references/claude-prompt-antipatterns.md).
+
+Anti-patterns (short list):
 
 - Numbered micro-steps for work Claude should plan itself.
 - Vague quality pleas ("be thorough", "don't make mistakes") — replace
