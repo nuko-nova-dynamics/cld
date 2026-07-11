@@ -132,9 +132,16 @@ context. See the claude-review skill for the template.
 
 - Non-zero exit: read the status line + stderr artifact. Common
   signatures:
+  - `error_max_structured_output_retries` → the work usually finished;
+    only the JSON report failed (known Claude Code issue with large
+    payloads). Check `git diff`, then follow the runner's printed
+    recovery hint (resume with `--tools ""`). Don't redo the task.
   - `permission denials: N (...)` in the summary → the sandbox tier
     blocked tools the task needed. Escalate `ro` → `write` (or ask the
     user about `full`) and re-run or resume.
+  - Long runs may auto-fallback mid-run (e.g. Fable 5 → Opus 4.8 —
+    documented behavior); `modelUsage` in the result artifact shows
+    every model that served the session. Attribute work accordingly.
   - auth errors ("Invalid API key", OAuth/token expiry) → tell the user
     to run `claude` interactively once to re-authenticate, or
     `claude setup-token` for long-lived auth.

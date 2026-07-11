@@ -31,3 +31,15 @@
 - prompting-claude deepened with three reference files: prompt blocks,
   end-to-end recipes, and anti-patterns (Claude-tuned).
 - Plugin directory assets: logo + composer icon.
+
+## 0.2.1 (2026-07-11)
+
+- Field-hardening from the first real-world failure (174-turn, $70
+  write run): Claude Code's StructuredOutput validation can wrongly
+  reject large payloads (`structured_output_retry_exhausted` while the
+  work itself completed). Runner now prints a recovery hint on that
+  subtype, salvages fenced JSON when a "successful" schema run lacks
+  `structured_output`, and gains `--schema-retries`
+  (MAX_STRUCTURED_OUTPUT_RETRIES). Skills document the bounded-payload
+  rule, the verified `--tools ""` recovery recipe, resume-cost warning
+  on huge sessions, and mid-run model auto-fallback attribution.

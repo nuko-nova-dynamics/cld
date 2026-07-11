@@ -1,6 +1,6 @@
 {
   "name": "cld",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Full-surface Claude Code integration for Codex: delegate, review, fan out, resume, and act on structured Claude results. Codex drives claude directly — no middleman runtime.",
   "author": {
     "name": "Nuko Nova Dynamics",

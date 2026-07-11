@@ -37,11 +37,42 @@ as the output contract:
 Keeping schemas strict-compatible means the same files work for both
 this plugin and its Codex-side mirror (cdx).
 
+## Keep payloads bounded (known upstream failure)
+
+Claude Code's StructuredOutput validation can wrongly reject very
+large report payloads (observed on 2.1.207 after a 174-turn run:
+repeated `must have required property 'files_changed'` although the
+field was present; `terminal_reason: structured_output_retry_exhausted`).
+Defenses:
+
+- Don't attach schemas to very long mutating runs; ask for a prose
+  report, or recover the JSON afterwards (below).
+- When you do, instruct in the prompt: summary ≤ 1 short paragraph,
+  arrays ≤ ~30 short string entries.
+- `--schema-retries <n>` raises the validation retry budget
+  (`MAX_STRUCTURED_OUTPUT_RETRIES`).
+
+If a run ends `error_max_structured_output_retries`, the WORK is
+usually complete — check `git diff` first, then recover the report
+(verified recipe):
+
+```bash
+node scripts/claude-run.mjs --sandbox ro --cd <same dir> \
+  --resume <session-id> --tools "" --schema <same file> \
+  -- "Tools are disabled. Emit only the JSON report. Keep fields concise."
+```
+
+`--tools ""` removes tool_use entirely so the model must answer in
+text. Note: resuming a huge session re-reads its full cached context —
+expect a nontrivial cost on 100+-turn sessions.
+
 ## Parsing
 
-Parse the final message as JSON. On parse failure treat the run as
-failed and retry once, appending "Return ONLY the JSON object." to the
-prompt.
+Parse the final message as JSON. The runner already salvages a fenced
+JSON block if Claude Code drops `structured_output` on an otherwise
+successful run (it prints a `note:` when it does). On parse failure
+treat the run as failed and retry once, appending "Return ONLY the
+JSON object." to the prompt.
 
 Always verify substantive claims in parsed output against the repo
 before acting — schema conformance is not truth.

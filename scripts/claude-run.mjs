@@ -33,7 +33,7 @@ function die(msg) {
   process.stderr.write(`claude-run: ${msg}\n`);
   process.stderr.write(
     "usage: claude-run.mjs --sandbox <ro|write|full> [--model <m>] [--effort <low|medium|high|xhigh|max>] " +
-      "[--schema <path>] [--resume <id|last>] [--fork] [--session-id <uuid>] [--name <s>] " +
+      "[--schema <path>] [--schema-retries <n>] [--resume <id|last>] [--fork] [--session-id <uuid>] [--name <s>] " +
       "[--ephemeral] [--budget <usd>] [--max-turns <n>] [--fallback-model <m,...>] " +
       "[--agent <name>] [--agents <json>] [--tools <list>] [--allow <tools>] [--deny <tools>] " +
       "[--mcp-config <f-or-json>]... [--strict-mcp-config] [--betas <b,...>] " +
@@ -67,6 +67,8 @@ function parseArgs(argv) {
       o.effort = next(a);
     } else if (a === "--schema") {
       o.schema = next(a);
+    } else if (a === "--schema-retries") {
+      o.schemaRetries = next(a);
     } else if (a === "--resume") {
       o.resume = next(a);
     } else if (a === "--fork") {
@@ -212,9 +214,12 @@ if (opts.schema) {
 argv.push(prompt);
 
 const bin = process.env.CLD_CLAUDE_BIN || "claude";
+const childEnv = { ...process.env };
+if (opts.schemaRetries) childEnv.MAX_STRUCTURED_OUTPUT_RETRIES = opts.schemaRetries;
 const child = spawn(bin, argv, {
   cwd: opts.cd || process.cwd(),
   stdio: ["ignore", "pipe", "pipe"],
+  env: childEnv,
 });
 
 let stdoutBuf = "";
@@ -267,12 +272,31 @@ child.on("close", (code) => {
     lines.push(`permission denials: ${denials.length} (${names}) — escalate --sandbox tier if these blocked the task`);
   }
   // With --json-schema the validated object lands in structured_output; the
-  // prose result stays in result.
+  // prose result stays in result. Claude Code can also finish "success" with
+  // no structured_output (observed 2.1.207) after its StructuredOutput tool
+  // rejects large payloads — salvage a fenced JSON block from the prose.
   let finalMsg = null;
   if (result?.structured_output !== undefined && result?.structured_output !== null) {
     finalMsg = JSON.stringify(result.structured_output, null, 2);
   } else if (typeof result?.result === "string") {
     finalMsg = result.result;
+    if (opts.schema && finalMsg) {
+      const fenced = finalMsg.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
+      if (fenced) {
+        try {
+          finalMsg = JSON.stringify(JSON.parse(fenced[1]), null, 2);
+          lines.push("note: structured_output missing; salvaged fenced JSON from the prose result");
+        } catch {}
+      }
+    }
+  }
+  if (result?.subtype === "error_max_structured_output_retries") {
+    lines.push(
+      "note: structured output failed but the session's WORK may be complete — inspect `git diff` before redoing anything."
+    );
+    lines.push(
+      `recover the report: --resume ${result?.session_id ?? "<id>"} --tools "" --schema <same> -- "Tools are disabled. Emit only the JSON report." (keep report fields concise)`
+    );
   }
   if (finalMsg != null) writeFileSync(messagePath, finalMsg);
   lines.push("--- final message ---");
