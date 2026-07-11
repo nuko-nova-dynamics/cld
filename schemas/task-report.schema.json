@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string" },
+    "files_changed": { "type": "array", "items": { "type": "string" } },
+    "commands_run": { "type": "array", "items": { "type": "string" }, "description": "Empty array if none" },
+    "risks": { "type": "array", "items": { "type": "string" }, "description": "Empty array if none" },
+    "follow_ups": { "type": "array", "items": { "type": "string" }, "description": "Empty array if none" }
+  },
+  "required": ["summary", "files_changed", "commands_run", "risks", "follow_ups"],
+  "additionalProperties": false
+}

@@ -1,0 +1,27 @@
+{
+  "name": "cld",
+  "version": "0.1.0",
+  "description": "Full-surface Claude Code integration for Codex: delegate, review, fan out, resume, and act on structured Claude results. Codex drives claude directly — no middleman runtime.",
+  "author": {
+    "name": "Nuko Nova Dynamics",
+    "email": "hello@nukonova.com"
+  },
+  "homepage": "https://github.com/nuko-nova-dynamics/cld",
+  "repository": "https://github.com/nuko-nova-dynamics/cld",
+  "license": "Apache-2.0",
+  "keywords": ["claude", "anthropic", "delegation", "code-review", "multi-model"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Claude for Codex",
+    "shortDescription": "Delegate tasks, reviews, and parallel fleets to Claude Code",
+    "longDescription": "Turns Codex into an orchestrator for Anthropic's Claude Code CLI. Delegate implementation or research tasks, run schema-backed code reviews, fan out parallel Claude workers, resume and fork Claude sessions, and act on structured JSON results — all through a context-safe bundled runner. The inverse of the cdx plugin (which lets Claude drive Codex).",
+    "developerName": "Nuko Nova Dynamics",
+    "category": "Developer Tools",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/nuko-nova-dynamics/cld",
+    "defaultPrompt": [
+      "Get a second opinion from Claude on this diff",
+      "Delegate this implementation to Claude, then review its work"
+    ]
+  }
+}
