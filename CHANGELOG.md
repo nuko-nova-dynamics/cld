@@ -43,3 +43,11 @@
   (MAX_STRUCTURED_OUTPUT_RETRIES). Skills document the bounded-payload
   rule, the verified `--tools ""` recovery recipe, resume-cost warning
   on huge sessions, and mid-run model auto-fallback attribution.
+
+## 0.2.2 (2026-08-08)
+
+- Publish through the shared Nuko Nova marketplace instead of an embedded
+  self-marketplace.
+- Add a Nuko Nova Dynamics copyright notice.
+- Document the unrestricted access granted by `--sandbox full` and recommend
+  the narrower read-only and workspace-write tiers for ordinary work.

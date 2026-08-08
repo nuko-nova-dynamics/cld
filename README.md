@@ -34,13 +34,13 @@ describe the task ("get a second opinion from Claude on this diff").
 
 ## Install
 
-### ChatGPT desktop app (personal marketplace)
+### ChatGPT desktop app
 
-Add this repo as a marketplace and install:
+Add the Nuko Nova marketplace and install:
 
 ```bash
-codex plugin marketplace add /path/to/cld   # or: codex plugin marketplace add nuko-nova-dynamics/cld
-codex plugin add cld@cld
+codex plugin marketplace add nuko-nova-dynamics/marketplace
+codex plugin add cld@nuko-nova-tools
 ```
 
 Then restart the ChatGPT desktop app; `cld` appears under **Plugins**.
@@ -58,6 +58,11 @@ artifact paths for the full result. Permission tiers:
 | `--sandbox ro` | read files + read-only shell (git diff/log/…, ls, cat, rg) + web; nothing else |
 | `--sandbox write` | auto-accepted file edits + shell |
 | `--sandbox full` | `--dangerously-skip-permissions` (explicit user intent only) |
+
+`--sandbox full` gives the delegated Claude process unrestricted command and
+filesystem access and bypasses its normal permission prompts. Use it only after
+an explicit request, in a trusted workspace, and with the exact task and target
+reviewed. Prefer `ro` for inspection and `write` for ordinary implementation.
 
 Structured output: `--schema <file>` forces the result to validate
 against a JSON Schema (bundled: review-findings, verdict, task-report,
