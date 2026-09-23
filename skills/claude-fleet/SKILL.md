@@ -1,30 +1,16 @@
 ---
 name: claude-fleet
-description: Fan out 2-4 parallel Claude Code workers on a task — decomposition, multi-angle second opinions, or A/B implementations. Invoke explicitly with $claude-fleet, or use when the user wants multiple Claude workers or parallel Claude runs.
+description: Coordinate independent Claude Code workers for decomposed tasks, review angles, or controlled model comparisons, then verify and combine their results.
 ---
 
 # Claude fleet
 
-Use the driving-claude skill's invocation contract. Fan out N parallel
-runner invocations (from the plugin root), then synthesize.
+Delegate only when independent work can save time or improve coverage. Start with two workers; use more only when each has a useful bounded task. Do not multiply workers merely to obtain agreement.
 
-Rules:
+For each worker, record its task, target `--cd`, file scope, model/effort, completion criteria, budget if applicable, unique scratch directory, and eventual session ID. Use an absolute runner and schema path. Allocate any shared task budget across workers so their caps do not each reuse the full allowance. Track cumulative usage before retries or resumes. Keep the parent working on independent tasks while workers run.
 
-- Default 2 workers; cap at 4 unless the user explicitly asks for
-  more.
-- If the user gave angles (e.g. "correctness; performance; security"),
-  one worker per angle, each `--sandbox ro`, reporting via `--schema
-  schemas/task-report.schema.json` (or review-findings for review
-  angles).
-- Without angles, decompose the task into non-overlapping subtasks
-  yourself. Mutating workers get `--sandbox write` and MUST have
-  disjoint file scopes stated explicitly in their prompts — two
-  workers editing the same file is a corruption risk, not parallelism.
-- Launch every worker concurrently (background execution if your
-  harness supports it), each with its own `--scratch` dir.
-- A/B implementations: run them in separate git worktrees (create
-  them yourself) or have both report patches via `--schema
-  schemas/patch-plan.schema.json` instead of writing directly.
-- When all report: synthesize — dedupe, note agreements/disagreements,
-  pick winners. Present one unified result with per-worker session
-  ids.
+For reviews, give workers distinct questions and require source evidence. For writes, use isolated worktrees where practical; shared working trees require disjoint files and no overlapping formatters, generated outputs, lockfiles, or Git operations. Worktrees start from a commit and do not automatically contain dirty work: explicitly provide the intended starting state without discarding existing changes.
+
+For A/B comparisons, hold task, source, tools, and checks constant; pin full model IDs and explicit effort. Use separate working trees for independent implementations. `patch-plan.schema.json` describes a plan, not an executable patch.
+
+Collect every worker's completion or failure, inspect artifacts and changes, verify substantive findings, and resolve conflicts before synthesizing one result. Agreement is not independent proof. Report completed work, unresolved items, actual models used, and per-worker session IDs. One failed worker does not justify discarding useful independent results or silently narrowing the task.
