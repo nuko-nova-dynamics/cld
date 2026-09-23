@@ -5,7 +5,7 @@ description: Resume, fork, or locate Claude Code sessions used by this plugin. U
 
 # Claude sessions
 
-Retain the session ID, original working directory, selected model/effort, and runtime flags with each delegated result. Prefer that record over guessing from transcript filenames.
+Read the run's `run.json` for lifecycle status, session ID, original cwd, and recorded launch context. Retain any required options it deliberately omits, such as inline settings, prompts, MCP configuration, and raw arguments, without logging credentials. The record is evidence for resumption, not an automatic replay instruction.
 
 ```bash
 node <plugin-root>/scripts/claude-run.mjs --sandbox <tier> \

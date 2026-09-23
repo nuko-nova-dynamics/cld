@@ -22,12 +22,12 @@ function run(name, args, check) {
     encoding: "utf8", cwd: root, timeout: 180000,
   });
   let result;
-  try { result = JSON.parse(readFileSync(path.join(scratch, "result.json"), "utf8")); } catch {}
+  try { result = JSON.parse(readFileSync(res.stdout.match(/^result: (.+)$/m)?.[1] ?? path.join(scratch, "result.json"), "utf8")); } catch {}
   const ok = res.status === 0 && check(result);
   console.log(`${ok ? "PASS" : "FAIL"} ${name}`);
   if (result?.modelUsage) console.log(`models: ${Object.keys(result.modelUsage).join(", ")}`);
-  if (result?.total_cost_usd != null) console.log(`estimated cost: $${result.total_cost_usd.toFixed(4)}`);
-  console.log(`artifacts: ${scratch}`);
+  if (Number.isFinite(result?.total_cost_usd)) console.log(`estimated cost: $${result.total_cost_usd.toFixed(4)}`);
+  console.log(`artifacts: ${res.stdout?.match(/^result: (.+)$/m)?.[1] ?? scratch}`);
   if (!ok) {
     failures += 1;
     console.log(`exit=${res.status}; error=${res.error?.message ?? "none"}`);

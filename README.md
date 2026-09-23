@@ -43,7 +43,7 @@ node /path/to/cld/scripts/claude-run.mjs --sandbox ro \
   -- "Review the current diff for actionable defects. Do not edit. Cite source evidence."
 ```
 
-The runner prints status, session ID, model usage, token/cost estimates, permission denials, and a bounded final-message excerpt. Full result JSON, final message, and stderr remain in scratch artifacts. Exit zero requires a successful terminal result; `--schema` also requires Claude Code's `structured_output`. The runner relies on Claude Code for schema validation and does not treat JSON recovered from prose as validated.
+The runner prints status, session ID, model usage, token/cost estimates, permission denials, and a bounded final-message excerpt. Each run saves raw stdout/stderr, its terminal result, final message, and a `run.json` lifecycle record. The record retains safe launch context; it does not copy prompts, raw flags, inline settings, or environment values. Raw provider output may still contain sensitive content. Exit zero requires a successful terminal result; `--schema` also requires Claude Code's `structured_output`. The runner relies on Claude Code for schema validation and does not treat JSON recovered from prose as validated.
 
 | Preset | Behavior |
 |---|---|
@@ -53,7 +53,7 @@ The runner prints status, session ID, model usage, token/cost estimates, permiss
 
 The historical `--sandbox` name describes permission presets, not filesystem isolation. Inherited configuration, hooks, shell operations, MCP servers, extra allowances, and raw flags affect what can run. See the [flag map](skills/driving-claude/references/flag-map.md) before extending permissions.
 
-Use absolute runner/schema paths and an explicit target `--cd`. On resume, restore required launch flags. Output is buffered until Claude exits; the runner does not stream progress. SIGINT and SIGTERM are forwarded to Claude, with forced shutdown after five seconds. Interrupted runs exit nonzero and save available artifacts. POSIX cancellation targets the owned process group; Windows cancellation targets the direct child. Give every concurrent run a unique scratch directory.
+Use absolute runner/schema paths and an explicit target `--cd`. On resume, restore required launch flags. Output is written to artifact files as it arrives; the console prints its final summary on exit. Parsing is capped at 16 MiB of stdout: larger output fails explicitly while the raw file remains available. SIGINT and SIGTERM are forwarded to Claude, with forced shutdown after five seconds. Interrupted runs exit nonzero and save available artifacts. POSIX cancellation targets the owned process group; Windows cancellation targets the direct child. `--scratch` now selects a parent folder: every call creates a unique `cld-run-*` child. Use the printed artifact paths instead of assuming files sit directly under the supplied parent. This prevents concurrent workers from replacing each other's results.
 
 ## Verification
 
@@ -62,11 +62,13 @@ node --test tests/runner.test.mjs
 node tests/smoke.mjs
 ```
 
-Offline tests use a mock CLI and cover terminal results, schema presence, failure propagation, permission arguments, artifacts, and truncation. Live smoke tests consume account usage, run plain/schema/verbose probes, and preserve their artifacts. Each probe sets a $0.50 Claude Code budget and a five-turn limit; those controls are not billing guarantees. To probe a specific model:
+Offline tests use real fake-CLI processes and cover terminal results, schema presence, permissions, cancellation, concurrent artifact isolation, incremental files, parse limits, and secret exclusion from run metadata. GitHub Actions runs them on Linux and macOS. Live smoke tests consume account usage, run plain/schema/verbose probes, and preserve their artifacts. Each probe sets a $0.50 Claude Code budget and a five-turn limit; those controls are not billing guarantees. To probe a specific model:
 
 ```bash
 CLD_SMOKE_MODEL=claude-opus-5-5 node tests/smoke.mjs
 ```
+
+The [run ownership decision](docs/adr/0001-run-ownership.md) describes the execution module and its limits.
 
 The [September research record](docs/research-2026-09-23.md) lists sources, decisions, and validation limits.
 

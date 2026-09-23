@@ -8,10 +8,10 @@ Checked against local `claude --version` **2.1.280** on 2026-09-23 and the [offi
 
 | Runner | Claude flag | Contract |
 | --- | --- | --- |
-| Always set | `-p --output-format json` | One non-interactive result. The runner records `result.json`, `last-message.txt`, and `stderr.log` in a scratch directory. |
+| Always set | `-p --output-format json` | One non-interactive result. The runner records `result.json`, `last-message.txt`, `stdout.log`, `stderr.log`, and `run.json` in an isolated run directory. |
 | `--schema <file>` | `--json-schema <inline JSON>` | Claude puts schema output in `structured_output`. A successful runner exit requires a `result` message with `subtype: "success"` and this field present. Prose in `result` is diagnostic, not schema output. |
 | `--schema-retries <n>` | `MAX_STRUCTURED_OUTPUT_RETRIES` environment variable | Sets the retry budget for structured output. Inspect changed files before retrying a run whose final report failed. |
-| `--scratch <dir>` | Runner only | Selects where the three artifacts go. Give parallel workers different directories. |
+| `--scratch <dir>` | Runner only | Selects a parent folder; each call creates a unique `cld-run-*` child. Follow the reported artifact paths. |
 | `--raw --verbose` | `--verbose` | Claude may emit an array of messages instead of one object. The runner selects the terminal `result` message. |
 
 The runner reports `modelUsage` names when present. Use that field to attribute a run; `--model` alone does not prove which model served every request. JSON cost totals are [client-side estimates](https://code.claude.com/docs/en/headless#get-structured-output), and a resumed conversation's total can include earlier runs.

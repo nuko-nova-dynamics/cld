@@ -14,7 +14,7 @@ Apply a correction only when its failure mode is present.
 | Answering current model questions from memory | Retrieve the exact name and current primary docs, especially with Fable 5.1 at low effort. |
 | Whole-file rewrites for small fixes | Ask for targeted edits and report adjacent concerns separately. |
 | “Next I will…” as the final result of unfinished work | Name remaining acceptance criteria and resume within limits. Distinguish a completed turn from a completed task. |
-| A prompt requests progress but nothing appears | This runner buffers stdout. For custom API clients, inspect thinking progress blocks and display configuration; prompt wording alone cannot fix rendering. |
+| A prompt requests progress but nothing appears | This runner saves output incrementally to artifact files but prints its console summary at exit. For custom API clients, inspect thinking progress blocks and display configuration; prompt wording alone cannot fix rendering. |
 | “No tools” implemented only with `--tools ""` | Also restrict MCP with `--strict-mcp-config` and no supplied configs. Hooks/configuration still need separate consideration. |
 | Read-only review silently promoted to writes after a denial | Inspect the blocked action, preserve scope, and use read-only evidence or an authorized narrow permission. |
 | Trusting findings or task reports at face value | Inspect source, diffs, and verification artifacts before acting. |

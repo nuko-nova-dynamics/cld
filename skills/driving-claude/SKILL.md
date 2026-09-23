@@ -16,7 +16,7 @@ node <plugin-root>/scripts/claude-run.mjs --sandbox <ro|write|full> \
   --cd <target-repo> [flags] -- <prompt>
 ```
 
-Schema and scratch paths resolve from the caller's directory, not `--cd`; use absolute paths. Preserve pre-existing changes. Give each concurrent invocation its own scratch directory.
+Schema and scratch paths resolve from the caller's directory, not `--cd`; use absolute paths. Preserve pre-existing changes. `--scratch` is a parent folder; the runner creates a unique child for each invocation. Retain the printed artifact paths.
 
 The runner invokes `claude -p --output-format json`, buffers output, and prints a bounded summary plus paths to the full result, final message, and stderr. It exits successfully only for a successful terminal result; schema runs also require Claude Code's `structured_output` field. Read the full message artifact when the summary is truncated. See [flag-map.md](references/flag-map.md) for the exact CLI mapping and limitations.
 
@@ -43,7 +43,7 @@ The name `--sandbox` is historical: these are Claude permission presets, not OS 
 
 ## Results and continuation
 
-1. Read exit status, terminal subtype, errors, permission denials, and artifacts. Record the session ID, target directory, selected model/effort, and required runtime flags.
+1. Read exit status, terminal subtype, errors, permission denials, and artifacts. Read `run.json` for lifecycle status, cwd, and safe launch context. Retain required runtime options omitted from that record without copying credentials.
 2. For schema runs, parse `last-message.txt` only after success. Missing `structured_output` is failure; fenced prose is diagnostic data, not a validated result. The runner relies on Claude Code's schema validation; validate additional application constraints before acting.
 3. Inspect `modelUsage` in `result.json` for models that actually served the session. A requested model or a model's self-description does not establish attribution; multiple models alone do not establish the reason for fallback.
 4. Verify findings against current files. After edits, inspect the diff and relevant test evidence. Run any missing checks; avoid repeating already adequate checks without cause.

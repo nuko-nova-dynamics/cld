@@ -34,7 +34,7 @@ On resume, send the delta plus any changed facts or constraints. Re-pass require
 
 For unattended work, state that Claude should complete authorized work rather than end by announcing its next step. Check the returned artifacts yourself. If work remains and no blocker exists, resume with specific unfinished items, with at most two corrective continuations before reassessing. Do not confuse a successful CLI turn with a finished user task.
 
-The runner buffers output until exit. Asking Claude for progress narration does not make this runner stream updates. The calling agent must keep the user informed from observable process/artifact state, without inventing progress.
+The runner writes stdout/stderr artifacts during execution and prints its console summary on exit. Asking Claude for progress narration does not guarantee upstream progress events. Inspect the reported run record and artifact files; keep the user informed from observed state without inventing progress.
 
 ## Load only what the task needs
 

@@ -2,14 +2,12 @@
 // cld runner: composes `claude -p --output-format json`, tees the full result
 // object to a scratch file, and prints a compact context-safe summary.
 // Contract: exit 0 only for a terminal success result with a zero process exit.
-import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import { executeRun } from "./run-execution.mjs";
 
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 const FINAL_MESSAGE_LIMIT = 6000;
-const INTERRUPT_GRACE_MS = 5000;
 // ro permits common read tools, uses default permission mode, and denies edit
 // tools. Bash allow patterns are not filesystem isolation.
 const RO_ALLOWED_TOOLS = [
@@ -145,12 +143,6 @@ if (opts.ephemeral && opts.resume) die("--ephemeral cannot be used with --resume
 const prompt = opts.promptParts.join(" ").trim();
 if (!prompt) die("a prompt is required (resume also needs a delta instruction)");
 
-const scratch = opts.scratch ?? mkdtempSync(path.join(tmpdir(), "cld-"));
-mkdirSync(scratch, { recursive: true });
-const resultPath = path.join(scratch, "result.json");
-const messagePath = path.join(scratch, "last-message.txt");
-const stderrPath = path.join(scratch, "stderr.log");
-
 const argv = ["-p", "--output-format", "json"];
 
 // Sandbox tiers (claude has no sandbox flag; permissions are the control):
@@ -225,81 +217,51 @@ argv.push(prompt);
 const bin = process.env.CLD_CLAUDE_BIN || "claude";
 const childEnv = { ...process.env };
 if (opts.schemaRetries) childEnv.MAX_STRUCTURED_OUTPUT_RETRIES = opts.schemaRetries;
-const child = spawn(bin, argv, {
-  cwd: opts.cd || process.cwd(),
-  stdio: ["ignore", "pipe", "pipe"],
-  env: childEnv,
-  detached: process.platform !== "win32",
-});
+const context = {
+  model: opts.model ?? null,
+  effort: opts.effort ?? null,
+  sandbox: opts.sandbox,
+  sessionSelection: opts.resume === "last" ? "resume-last" : opts.resume ? "resume-id-or-name"
+    : opts.sessionId ? "new-session-id" : "new",
+  ephemeral: Boolean(opts.ephemeral),
+  budgetUsd: opts.budget == null ? null : Number(opts.budget),
+  maxTurns: opts.maxTurns == null ? null : Number(opts.maxTurns),
+  hasRawFlags: opts.raw.length > 0,
+  hasSettings: Boolean(opts.settings || opts.settingSources),
+  hasMcpConfig: opts.mcpConfigs.length > 0,
+  hasStrictMcpConfig: Boolean(opts.strictMcpConfig),
+  hasSystemPrompt: Boolean(opts.systemPrompt || opts.appendSystemPrompt),
+  hasAdditionalDirs: opts.addDirs.length > 0,
+  hasCustomToolSelection: opts.tools != null,
+  hasPermissionOverrides: Boolean(opts.allow || opts.deny),
+  hasFallbackModel: Boolean(opts.fallbackModel),
+  hasAgentConfig: Boolean(opts.agent || opts.agents),
+  hasWorktree: Boolean(opts.worktree),
+  hasBetas: Boolean(opts.betas),
+  hasSessionName: Boolean(opts.name),
+  hasSchemaRetries: Boolean(opts.schemaRetries),
+};
 
-let stdoutBuf = "";
-let stderrBuf = "";
-let spawnError = null;
-let interruptedBy = null;
-let interruptTimer = null;
-
-function signalChild(signal) {
-  if (!child.pid) return;
-  if (process.platform !== "win32") {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {}
-  }
-  try { child.kill(signal); } catch {}
-}
-
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => {
-    if (interruptedBy) return;
-    interruptedBy = signal;
-    signalChild(signal);
-    interruptTimer = setTimeout(() => signalChild("SIGKILL"), INTERRUPT_GRACE_MS);
+let outcome;
+try {
+  outcome = await executeRun({
+    bin, argv, cwd: path.resolve(opts.cd || process.cwd()), env: childEnv,
+    scratchParent: opts.scratch, context, schemaRequested: Boolean(opts.schema),
+    onStart: ({ recordPath }) => process.stderr.write(`claude-run: run record: ${recordPath}\n`),
   });
+} catch (err) {
+  process.stderr.write(`claude-run: execution failed: ${err.message}\n`);
+  process.exitCode = 1;
 }
 
-child.stdout.setEncoding("utf8");
-child.stderr.setEncoding("utf8");
-child.stdout.on("data", (chunk) => {
-  stdoutBuf += chunk;
-});
-child.stderr.on("data", (chunk) => {
-  stderrBuf += chunk;
-});
-
-child.on("close", (code) => {
-  if (interruptTimer) clearTimeout(interruptTimer);
-  if (interruptedBy) signalChild("SIGKILL");
-  if (spawnError) stderrBuf += `${stderrBuf && !stderrBuf.endsWith("\n") ? "\n" : ""}claude-run: failed to spawn ${bin}: ${spawnError.message}\n`;
-  writeFileSync(stderrPath, stderrBuf);
-  // -p --output-format json emits one JSON object on stdout. With
-  // --raw --verbose it becomes an array of messages (the result object is the
-  // element with type "result"); with stream-json it's JSONL whose last line
-  // is the result. Handle all three.
-  let messages = [];
-  try {
-    const parsed = JSON.parse(stdoutBuf);
-    messages = Array.isArray(parsed) ? parsed : [parsed];
-  } catch {
-    for (const line of stdoutBuf.split("\n")) {
-      const t = line.trim();
-      if (!t.startsWith("{")) continue;
-      try {
-        const parsed = JSON.parse(t);
-        messages.push(...(Array.isArray(parsed) ? parsed : [parsed]));
-      } catch {}
-    }
-  }
-  const result = messages.filter((m) => m?.type === "result").at(-1) ?? null;
-  writeFileSync(resultPath, result ? JSON.stringify(result, null, 2) : stdoutBuf);
-
-  const hasStructuredOutput = result?.structured_output !== undefined && result?.structured_output !== null;
-  const ok = !interruptedBy && code === 0 && result?.subtype === "success" && result.is_error !== true &&
-    (!opts.schema || hasStructuredOutput);
+if (outcome) {
+  const { ok, result, finalMsg, exitCode, interruptedBy, hasStructuredOutput,
+    outputTooLarge, artifactError, spawnError, stderrTail,
+    runDir, resultPath, messagePath, stdoutPath, stderrPath, recordPath } = outcome;
   const lines = [];
   lines.push(`session: ${result?.session_id ?? "unknown"}`);
   lines.push(
-    `status: ${ok ? `completed (${result?.subtype ?? "success"})` : `failed (exit ${code}${result?.subtype ? `, ${result.subtype}` : ""})`}`
+    `status: ${ok ? `completed (${result?.subtype ?? "success"})` : `failed (exit ${exitCode}${result?.subtype ? `, ${result.subtype}` : ""})`}`
   );
   if (interruptedBy) lines.push(`interrupted: ${interruptedBy}`);
   if (result?.num_turns != null) lines.push(`turns: ${result.num_turns}`);
@@ -315,18 +277,13 @@ child.on("close", (code) => {
   if (Number.isFinite(result?.total_cost_usd)) lines.push(`cost: $${result.total_cost_usd.toFixed(4)}`);
   const denials = result?.permission_denials;
   if (Array.isArray(denials) && denials.length > 0) {
-    const names = [...new Set(denials.map((d) => d?.tool_name ?? "unknown"))].join(", ");
+    const names = [...new Set(denials.map((d) => typeof d?.tool_name === "string" && d.tool_name ? d.tool_name : "unknown"))].join(", ");
     lines.push(`permission denials: ${denials.length} (${names}); inspect the blocked operations and task authorization before changing permissions`);
   }
-  // With --json-schema the canonical object lands in structured_output. Keep
-  // prose for diagnosis when it is missing; do not treat prose as schema output.
-  let finalMsg = null;
-  if (hasStructuredOutput) {
-    finalMsg = JSON.stringify(result.structured_output, null, 2);
-  } else if (typeof result?.result === "string") {
-    finalMsg = result.result;
-  }
   if (opts.schema && !hasStructuredOutput) lines.push("note: structured_output missing from terminal result");
+  if (outputTooLarge) lines.push("note: stdout exceeded the 16 MiB parse limit; the complete output is in stdout.log");
+  if (artifactError) lines.push(`note: ${artifactError.channel} artifact write failed: ${artifactError.message}`);
+  if (spawnError) lines.push(`note: failed to spawn ${bin}: ${spawnError.message}`);
   if (result?.subtype === "error_max_structured_output_retries") {
     lines.push(
       "note: structured output failed; inspect workspace changes before repeating any task work."
@@ -337,24 +294,22 @@ child.on("close", (code) => {
         : `recover the report: --cd <original-project> --resume ${result?.session_id ?? "<id>"} --tools "" --strict-mcp-config --schema <same> -- "Report work already performed. Keep fields concise; do not repeat the task."`
     );
   }
-  writeFileSync(messagePath, finalMsg ?? "(no final message)");
   lines.push("--- final message ---");
   const shownMessage = finalMsg?.trim() || "(no final message)";
   lines.push(shownMessage.length > FINAL_MESSAGE_LIMIT
     ? `${shownMessage.slice(0, FINAL_MESSAGE_LIMIT)}\n[truncated; full message in ${messagePath}]`
     : shownMessage);
-  if (!ok && stderrBuf.trim()) {
+  if (!ok && stderrTail) {
     lines.push("--- stderr tail ---");
-    lines.push(stderrBuf.trim().slice(-400));
+    lines.push(stderrTail);
   }
   lines.push("--- artifacts ---");
+  lines.push(`run: ${runDir}`);
+  lines.push(`record: ${recordPath}`);
   lines.push(`result: ${resultPath}`);
   lines.push(`last-message: ${messagePath}`);
+  lines.push(`stdout: ${stdoutPath}`);
   lines.push(`stderr: ${stderrPath}`);
   process.stdout.write(lines.join("\n") + "\n");
-  process.exit(ok ? 0 : 1);
-});
-
-child.on("error", (err) => {
-  spawnError = err;
-});
+  process.exitCode = ok ? 0 : 1;
+}
