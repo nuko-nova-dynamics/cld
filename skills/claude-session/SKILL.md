@@ -1,41 +1,28 @@
 ---
 name: claude-session
-description: List, resume, or fork Claude Code sessions started through this plugin. Invoke explicitly with $claude-session, or use when the user wants to continue, check, or branch a previous Claude run.
+description: Resume, fork, or locate Claude Code sessions used by this plugin. Use when continuing prior Claude work, recovering a report, or branching a conversation.
 ---
 
 # Claude sessions
 
-Claude Code persists sessions per working directory under
-`~/.claude/projects/<slugified-cwd>/*.jsonl`, where the slug is the
-absolute cwd path with `/` and `.` replaced by `-` (e.g.
-`/Users/x/proj` → `-Users-x-proj`). The filename (minus `.jsonl`) is
-the session id.
-
-- **List recent sessions** for a directory:
+Read the run's `run.json` for lifecycle status, session ID, original cwd, and recorded launch context. Retain any required options it deliberately omits, such as inline settings, prompts, MCP configuration, and raw arguments, without logging credentials. The record is evidence for resumption, not an automatic replay instruction.
 
 ```bash
-ls -t ~/.claude/projects/<slug>/*.jsonl | head -5
+node <plugin-root>/scripts/claude-run.mjs --sandbox <tier> \
+  --cd <original-project> --resume <session-id> [required-launch-flags] \
+  -- <delta-instruction>
 ```
 
-  To label them, peek at each file's first user message (JSONL; look
-  for the first line whose `type` is `"user"`).
+- `--resume last` means the most recent session in the child's working directory. Use it only when that session is unambiguous; parallel workers make explicit IDs preferable.
+- `--fork` with `--resume` creates a new session. Retain the returned ID.
+- `--ephemeral` sessions cannot be resumed through this workflow.
+- Send the new instruction and changed context. Do not repeat the whole original task, but recheck current files because the workspace may have changed.
+- Re-pass launch-only configuration the task needs: `--mcp-config`, `--settings`, `--raw --plugin-dir --raw <path>`, `--fallback-model`, and `--add-dir`. Standard settings files are re-read on launch. Do not assume prompt text restores runtime configuration.
+- Select the permission tier for the current authorized action. A past write run does not authorize new writes during a review. The runner sets the mode explicitly.
+- A resumed transcript does not restart an interrupted background command or recover its missing output. Verify the actual process and workspace before rerunning anything.
+- `--budget` starts a new invocation cap on resume. If the user set a total task budget, subtract spend already incurred and pass only the remaining allocation. Do not resume with the original full cap each time.
+- Large resumed histories can incur substantial input cost, especially after cache expiry. CLI cost totals may include earlier calls; distinguish current-run usage from cumulative totals to avoid double-counting. These estimates and call-level caps are not billing guarantees.
 
-- **Resume** (same working directory as the original run, from the
-  plugin root):
+If the ID was lost, use Claude's documented session picker or inspect recent JSONL files under `~/.claude/projects/` for the target project. Storage paths are implementation details: locate the actual directory rather than assuming a hand-built slug is correct. Read only enough metadata to identify the task; do not dump private transcripts into the conversation.
 
-```bash
-node scripts/claude-run.mjs --sandbox <tier> --resume <session-id> -- <delta instruction>
-```
-
-  Send only the delta — the session retains full context. `--resume
-  last` continues the most recent session in the current directory.
-
-- **Fork** (branch off without touching the original): add `--fork` to
-  a resume. The runner prints the new session id.
-
-- Sessions created with `--ephemeral` were never persisted and cannot
-  be resumed.
-
-- Sandbox tier is per-run, not per-session: you can resume a `ro`
-  review session with `--sandbox write` to let Claude apply the fix it
-  proposed.
+Source: [Claude Code sessions](https://code.claude.com/docs/en/sessions), checked 2026-09-23.

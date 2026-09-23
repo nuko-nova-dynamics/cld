@@ -1,182 +1,86 @@
-# Claude Code CLI flag map — verified against Claude Code 2.1.207 (2026-07-11)
+# Claude Code CLI flag map
 
-Sources: `claude --help`, the official CLI reference
-(code.claude.com/docs/en/cli-reference — which states outright that
-`--help` does not list every flag), the env-vars reference
-(code.claude.com/docs/en/env-vars), and a strings-dump of the 2.1.207
-binary. Flags marked **[hidden]** are absent from `--help` but
-documented and/or verified live.
+Checked against local `claude --version` **2.1.280** on 2026-09-23 and the [official CLI reference](https://code.claude.com/docs/en/cli-reference). The runner is `scripts/claude-run.mjs`. It always starts `claude -p --output-format json` and requires `--sandbox ro|write|full`. Use `--cd <target repo>` for repository work and resume in that same directory.
 
-Runner flags map to these. Anything not wrapped can be passed with
-`--raw <arg>` (repeatable, verbatim passthrough placed before the
-prompt) or by calling `claude` directly.
+`claude --help` omits some documented flags. The tables distinguish runner options from Claude flags. `--raw <arg>` passes one argument through before the prompt; repeat it for a flag and its value. Do not use `--raw` to replace the runner's print/output contract or to request interactive or stdin streaming modes. The runner closes child stdin.
 
-## Core headless invocation (runner always sets)
+## Output and result
 
-| Flag | Notes |
-|---|---|
-| `-p, --print` | non-interactive; prints and exits. Skips the workspace trust dialog — only run in trusted directories |
-| `--output-format json` | single result object on stdout: `type, subtype, is_error, result, structured_output, session_id, num_turns, usage, total_cost_usd, permission_denials, modelUsage, duration_ms, stop_reason, ...` (field list verified live) |
+| Runner | Claude flag | Contract |
+| --- | --- | --- |
+| Always set | `-p --output-format json` | One non-interactive result. The runner records `result.json`, `last-message.txt`, `stdout.log`, `stderr.log`, and `run.json` in an isolated run directory. |
+| `--schema <file>` | `--json-schema <inline JSON>` | Claude puts schema output in `structured_output`. A successful runner exit requires a `result` message with `subtype: "success"` and this field present. Prose in `result` is diagnostic, not schema output. |
+| `--schema-retries <n>` | `MAX_STRUCTURED_OUTPUT_RETRIES` environment variable | Sets the retry budget for structured output. Inspect changed files before retrying a run whose final report failed. |
+| `--scratch <dir>` | Runner only | Selects a parent folder; each call creates a unique `cld-run-*` child. Follow the reported artifact paths. |
+| `--raw --verbose` | `--verbose` | Claude may emit an array of messages instead of one object. The runner selects the terminal `result` message. |
 
-## Permissions (runner `--sandbox ro|write|full`)
+The runner reports `modelUsage` names when present. Use that field to attribute a run; `--model` alone does not prove which model served every request. JSON cost totals are [client-side estimates](https://code.claude.com/docs/en/headless#get-structured-output), and a resumed conversation's total can include earlier runs.
 
-| Flag | Notes |
-|---|---|
-| `--allowedTools <tools...>` | ro: read-only shell whitelist + WebFetch/WebSearch (Read/Grep/Glob need no permission in -p mode); write: `Bash,WebFetch,WebSearch`. Runner `--allow <tools>` merges extras into the tier list. Rule syntax: `Bash(git diff:*)` scopes a tool |
-| `--permission-mode <default\|acceptEdits\|plan\|auto\|dontAsk\|bypassPermissions\|manual>` | write tier sets `acceptEdits`. `manual` = alias for `default` (v2.1.200+). Other modes via `--raw` |
-| `--dangerously-skip-permissions` | full tier ≡ `--permission-mode bypassPermissions`. Never outside explicit user intent |
-| `--allow-dangerously-skip-permissions` | adds bypass to the mode cycle without starting in it — `--raw` only |
-| `--disallowedTools <tools...>` | runner `--deny`. Bare name (`"Edit"`, `"*"`, `"mcp__*"`) removes the tool from the model's context entirely; scoped rule (`Bash(rm *)`) only denies matching calls |
-| `--tools <list\|""\|default>` | restrict the built-in tool SET; does NOT affect MCP tools (deny those with `--deny "mcp__*"` or `--strict-mcp-config` with no `--mcp-config`); runner `--tools` |
-| `--permission-prompt-tool <mcp-tool>` | **[hidden]** MCP tool that adjudicates permission prompts in -p mode (the programmatic alternative to our tiers). Since v2.1.199 it cannot approve MCP tools marked as requiring user interaction |
+## Permissions
 
-## Model & effort
+| Runner tier or option | Claude flags | Meaning |
+| --- | --- | --- |
+| `--sandbox ro` | `--permission-mode manual`, a narrow `--allowedTools` list, and `--disallowedTools Write,Edit,NotebookEdit` | Best-effort review mode. The named shell commands and web tools are pre-approved; edits through built-in file tools are denied. This is not OS isolation. |
+| `--sandbox write` | `--permission-mode acceptEdits` plus `--allowedTools Bash,WebFetch,WebSearch` | Auto-accepts file edits and shell commands. Scope the requested edits in the prompt. |
+| `--sandbox full` | `--dangerously-skip-permissions` | Starts `bypassPermissions`. Use only within the user's authorization. |
+| `--allow <rules>` | Extends `--allowedTools` | Pre-approves matching tools. It can widen any tier, including `ro`; do not treat the tier name as a guarantee after adding rules. |
+| `--deny <rules>` | `--disallowedTools` | Blocks matching tools. A bare tool name removes it from context; a scoped rule blocks matching calls. |
+| `--tools <names>` | `--tools` | Restricts **built-in** tool availability. It does not remove MCP tools; use `--deny "mcp__*"` when needed. |
 
-| Flag | Notes |
-|---|---|
-| `--model <alias\|full-name>` | runner `--model`; aliases `fable`, `opus`, `sonnet`, `haiku` (avoid haiku), or full ids like `claude-fable-5`. Overrides `ANTHROPIC_MODEL` and settings |
-| `--effort <low\|medium\|high\|xhigh\|max\|ultracode>` | runner `--effort`; `ultracode` (v2.1.203+) = xhigh + ultracode multi-agent mode — expensive, only on explicit user request |
-| `--fallback-model <m,...>` | runner `--fallback-model`; comma list tried in order on overload/retired-model (print-only) |
-| `--advisor <opus\|sonnet\|fable\|full-id>` | **[hidden]** server-side advisor tool for the session (v2.1.98+) — `--raw` |
-| `--betas <betas...>` | runner `--betas`; API-key users only |
+[Permission rules](https://code.claude.com/docs/en/permissions#permission-rule-syntax) decide which calls run without a prompt. `--allowedTools` does not restrict the tool set. Shell patterns match command text, so even a narrow prefix is not a filesystem or process boundary. Existing settings, hooks, MCP tools, and explicit `--raw` options can affect a run. For unattended calls, `--raw --permission-prompts --raw none` denies prompts that nobody can answer; it does not revoke pre-approved tools. Claude Code 2.1.280 also has [`--restricted`](https://code.claude.com/docs/en/cli-reference#cli-flags), which ignores user/project/local settings, limits file tools to working directories, and removes command/code tools unless individually re-enabled. The runner does not set it by default.
 
-## Cost & turn control
+## Model, effort, and cost
 
-| Flag | Notes |
-|---|---|
-| `--max-budget-usd <amount>` | runner `--budget`; hard dollar cap (print-only) |
-| `--max-turns <n>` | **[hidden]** runner `--max-turns`; cap agentic turns, exits with error at the limit (print-only). Verified live on 2.1.207 |
+| Runner | Claude flag | Contract |
+| --- | --- | --- |
+| `--model <alias\|id>` | `--model` | Selects a model for this launch. The current documented aliases include `default`, `best`, `fable`, `opus`, `sonnet`, and `haiku`; aliases change with version, provider, and settings. |
+| `--effort low\|medium\|high\|xhigh\|max` | `--effort` | These five levels are accepted by the runner. Claude also documents `ultracode`, which enables workflow orchestration at `xhigh`; pass that through `--raw` only when intentionally requested. Model and policy limits may lower the effective effort. |
+| `--fallback-model <m,...>` | `--fallback-model` | Tries up to three distinct fallbacks on overload, unavailability, or another non-retryable server error, then retries the primary at the next user turn. Auth, billing, rate limit, request-size, and transport failures do not trigger it. |
+| `--budget <usd>` | `--max-budget-usd` | Stops further API calls after the print-mode budget is reached. Subagent spend counts; earlier resumed-session spend does not count toward the new cap. |
+| `--max-turns <n>` | `--max-turns` | Limits agentic turns in print mode and exits with an error when reached. |
+| `--betas <values>` | `--betas` | API key users only. |
+
+The current [model configuration](https://code.claude.com/docs/en/model-config#model-aliases) says `fable` resolves to Fable 5.1 where available, while `opus` resolves to Opus 5.5 on the Anthropic API with Claude Code 2.1.280. Provider deployment IDs and organization settings can differ. `CLAUDE_CODE_EFFORT_LEVEL` is the documented environment override for effort; `CLAUDE_EFFORT` is not the current documented name. See [effort precedence](https://code.claude.com/docs/en/model-config#adjust-effort-level).
 
 ## Sessions
 
-| Flag | Notes |
-|---|---|
-| `-r, --resume <uuid\|name>` | runner `--resume <id>`; accepts session *names* too. Per working directory (+ its git worktrees) |
-| `-c, --continue` | most recent session in cwd; runner `--resume last` |
-| `--fork-session` | runner `--fork` (requires resume); new session id, original untouched |
-| `--session-id <uuid>` | runner `--session-id`; pin a v4 UUID up front |
-| `-n, --name <name>` | runner `--name`; names work as resume targets |
-| `--no-session-persistence` | runner `--ephemeral`; unresumable (print-only) |
-| `--from-pr <n\|url>` | resume sessions linked to a PR (GitHub/GitLab/Bitbucket) — `--raw` |
+| Runner | Claude flag | Contract |
+| --- | --- | --- |
+| `--resume <id\|name>` | `--resume` | Resumes a named or identified conversation. Pass `--cd <original project>` for the right working context. |
+| `--resume last` | `--continue` | Continues the most recent conversation for the child process's working directory. In print mode it can include earlier print/SDK sessions. |
+| `--fork` | `--fork-session` | With resume, creates a new session ID and leaves the original transcript intact. |
+| `--session-id <uuid>` | `--session-id` | Chooses a UUID for a new conversation. |
+| `--name <name>` | `--name` | Display name; an exact name can be a resume target. |
+| `--ephemeral` | `--no-session-persistence` | Does not save a resumable transcript. |
+| `--cd <dir>` | Spawn cwd | Sets Claude's working directory; Claude has no `--cd` flag. |
 
-On disk: `~/.claude/projects/<cwd-slug>/<session-id>.jsonl` (slug =
-absolute path with `/` and `.` → `-`).
+On [resume](https://code.claude.com/docs/en/sessions#resume-a-session), pass launch-only dependencies again: `--mcp-config`, `--settings`, `--plugin-dir`, `--fallback-model`, and `--add-dir` are not restored. Standard settings files are re-read. The CLI may restore a previous model, while a new `--model` overrides it. For print-mode resume, the runner supplies a fresh permission tier.
 
-## Background agents & cloud (the Claude-side "fleet/cloud" surface)
+## Workspace, agents, and configuration
 
-| Flag / command | Notes |
-|---|---|
-| `--bg, --background` | detached background session; prints session id + management commands. NOT combinable with `-p` — bypasses the runner contract, use deliberately |
-| `--bg --exec '<cmd>'` | **[hidden]** run a shell command as a PTY-backed background job |
-| `claude agents [--json] [--cwd <path>] [--all]` | list/monitor background sessions (`--json` for scripting) |
-| `claude attach <id>` / `claude logs <id>` / `claude stop <id>` / `claude respawn <id>` / `claude rm <id>` | manage background sessions from the shell |
-| `claude daemon status` / `claude daemon stop --any [--keep-workers]` | background-session supervisor diagnostics/recovery |
-| `--cloud "<task>"` | **[hidden]** create a Claude Code web session on claude.ai with the task (`--remote` is a deprecated alias) |
-| `--teleport` | **[hidden]** resume a claude.ai web session in the local terminal |
-| `--teammate-mode <in-process\|auto\|tmux\|iterm2>` | **[hidden]** agent-teams display mode — interactive concern, `--raw` |
+| Runner | Claude flag | Contract |
+| --- | --- | --- |
+| `--add-dir <dir>` | `--add-dir` | Grants access to another directory. It does not auto-discover most of that directory's `.claude/` configuration. |
+| `--worktree <name>` | `--worktree` | Starts Claude in an isolated Git worktree. |
+| `--agent <name>` / `--agents <json>` | Same flags | Selects a configured agent or defines [CLI subagents](https://code.claude.com/docs/en/sub-agents#cli-configuration). Claude validates `--agents` JSON at startup. |
+| `--mcp-config <file-or-json>` | Same flag | Loads an MCP server configuration. Repeat for several. |
+| `--strict-mcp-config` | Same flag | Loads only MCP servers named by `--mcp-config`. |
+| `--settings <file-or-json>` | Same flag | Applies additional settings for this launch. |
+| `--setting-sources <sources>` | Same flag | Chooses user, project, or local setting sources. Managed settings may still apply. |
+| `--append-system-prompt <text>` | Same flag | Keeps Claude Code's default system prompt. |
+| `--system-prompt <text>` | Same flag | Replaces the default prompt, including its tool guidance and safety instructions. |
 
-## Output contracts
+`--raw --bare` turns off automatic loading of hooks, most skills, custom agents, plugins, MCP servers, auto memory, and CLAUDE.md. It still loads skills from directories passed with `--add-dir`, and explicitly supplied settings, MCP servers, agents, or plugins can load. [Bare mode](https://code.claude.com/docs/en/headless#start-faster-with-bare-mode) does not read Anthropic OAuth or keychain credentials: it needs `ANTHROPIC_API_KEY` or an `apiKeyHelper` supplied through `--settings`. Third-party providers use their own credentials. Bare mode still has built-in Bash and file tools.
 
-| Flag | Notes |
-|---|---|
-| `--json-schema <inline-json>` | runner `--schema <file>` reads/validates/minifies the file and passes it inline. Result lands in `structured_output`. Invalid schemas error since v2.1.205; `format` keyword is annotation-only. `MAX_STRUCTURED_OUTPUT_RETRIES` env controls validation-failure retries |
+## Other documented CLI routes
 
-## Workspace & context
+These run outside the runner's `-p` contract:
 
-| Flag | Notes |
-|---|---|
-| `--add-dir <dirs...>` | runner `--add-dir`; grants file access only — `.claude/` config is NOT discovered from those dirs |
-| *(spawn cwd)* | runner `--cd <dir>`; claude has no cd flag — the runner sets the child process cwd |
-| `-w, --worktree <name\|#PR\|PR-url>` | runner `--worktree`; isolated git worktree at `<repo>/.claude/worktrees/<name>`; accepts a PR number/URL to branch from it |
-| `--system-prompt <s>` / `--system-prompt-file <f>` | replace the ENTIRE default prompt (mutually exclusive with each other; drops tool guidance + safety — you own what remains); runner `--system-prompt`, file variant via `--raw` |
-| `--append-system-prompt <s>` / `--append-system-prompt-file <f>` | append, keeping the default prompt; runner `--append-system-prompt`, file variant via `--raw` |
-| `--append-subagent-system-prompt <s>` | **[hidden]** append to every subagent's system prompt, -p only, v2.1.205+ — `--raw` |
-| `--settings <file-or-json>` | runner `--settings`; overrides matching keys for the session |
-| `--setting-sources <user,project,local>` | runner `--setting-sources` |
-| `--agent <name>` | runner `--agent`; run as a configured agent |
-| `--agents <json>` | runner `--agents`; ad-hoc subagents (same fields as subagent frontmatter + `prompt`) |
-| `--file <id:path...>` | download file resources at startup — `--raw` |
+| Command | Use |
+| --- | --- |
+| `claude --bg "<task>"`, `claude agents --json`, `claude attach/logs/stop/respawn/rm <id>` | Start and manage local background sessions. `--bg` cannot be combined with `-p`. |
+| `claude --cloud "<task>"`, `claude --teleport [session]` | Create a cloud session or bring one back locally. |
+| `claude doctor`, `claude auth status` | Read installation/settings diagnostics and authentication status. `auth status` returns JSON and exits 0 when signed in, 1 otherwise. |
+| `claude mcp login/logout <name>` | Manage OAuth for configured MCP servers. |
 
-## MCP
-
-| Flag | Notes |
-|---|---|
-| `--mcp-config <file-or-json...>` | runner `--mcp-config` (repeatable) |
-| `--strict-mcp-config` | runner `--strict-mcp-config`; ONLY servers from `--mcp-config` |
-| `claude mcp login/logout <name>` | headless-friendly MCP OAuth (v2.1.186+) |
-
-## Hooks & lifecycle (print mode; all `--raw`)
-
-| Flag | Notes |
-|---|---|
-| `--init` / `--maintenance` | **[hidden]** run Setup hooks with the `init`/`maintenance` matcher before the session (-p only) |
-| `--init-only` | **[hidden]** run Setup + SessionStart hooks, then exit |
-
-## Isolation / hygiene (all `--raw`)
-
-| Flag | Notes |
-|---|---|
-| `--bare` | minimal mode: no hooks/skills/plugins/MCP/CLAUDE.md auto-discovery; fastest scripted startup; auth strictly `ANTHROPIC_API_KEY` |
-| `--safe-mode` | all customizations off, normal auth (differs from `--bare`) |
-| `--plugin-dir <path>` / `--plugin-url <url>` | load a Claude plugin for this session only (`--plugin-dir-no-mcp` variant exists in the binary) |
-| `--disable-slash-commands` | disable all skills/commands |
-| `--no-chrome` | disable Chrome integration |
-| `--exclude-dynamic-system-prompt-sections` | move per-machine prompt sections into the first user message for cross-machine cache reuse (-p workloads) |
-| `--verbose`, `-d, --debug [filter]`, `--debug-file <path>` | diagnostics. NOTE: `--verbose` with `-p --output-format json` switches stdout to an ARRAY of messages — the runner handles it |
-
-## Streaming & advanced I/O (all `--raw`)
-
-| Flag | Notes |
-|---|---|
-| `--output-format stream-json` | JSONL events; final line is the result object (runner's fallback parser copes), prefer plain `json` |
-| `--include-partial-messages` / `--include-hook-events` / `--prompt-suggestions` | stream-json extras (some also need `--verbose`) |
-| `--input-format stream-json` / `--replay-user-messages` | streaming stdin protocols; not usable through the runner (stdin is ignored) |
-| `--json-schema` + `--tools ""` | pure-inference structured extraction with no tool use |
-
-## Interactive-only / not applicable in -p mode
-
-`--ide`, `--tmux`, `--remote-control`/`--rc`,
-`--remote-control-session-name-prefix`, `--chrome`, `--brief`,
-`--ax-screen-reader`, `--channels`,
-`--dangerously-load-development-channels`, `--teammate-mode`.
-Removed: `--enable-auto-mode` (v2.1.111; use `--permission-mode auto`).
-
-## In the binary but undocumented (observed in 2.1.207 strings; use with care)
-
-`--max-thinking-tokens` (prefer `CLAUDE_CODE_MAX_THINKING_TOKENS` env),
-`--plugin-dir-no-mcp`, `--parent-session-id`, `--session-mirror`,
-`--resume-session-at`, `--reply-on-resume`, `--create-session-in-dir`,
-`--prefill` / `--prefill-b64`, `--plan-mode-instructions` /
-`--plan-mode-required`, `--autocompact`, `--thinking` /
-`--thinking-display`, `--task-budget`, `--team-name`, `--cowork`,
-`--sdk-url`, `--managed-settings`. These are internal/unstable —
-document-only; don't build on them.
-
-## Relevant subcommands
-
-| Command | Notes |
-|---|---|
-| `claude doctor` | read-only install/settings diagnostics (claude-setup skill) |
-| `claude auth login/logout/status` | auth management; `status` exits 0/1 — good for health checks |
-| `claude setup-token` | long-lived OAuth token for CI/scripts (subscription required) |
-| `claude mcp` | manage MCP servers; `claude mcp serve` runs Claude Code itself as an MCP server |
-| `claude plugin` | manage Claude-side plugins |
-| `claude project purge [path] [--dry-run]` | delete local project state |
-| `claude update` / `claude install <ver>` | self-update / pin version |
-| `claude ultrareview [target] [--json] [--timeout <min>]` | cloud multi-agent review — billed; only on explicit user request |
-
-## Environment (docs: code.claude.com/docs/en/env-vars)
-
-| Variable | Notes |
-|---|---|
-| `CLD_CLAUDE_BIN` | (runner's own) override the `claude` binary the runner spawns |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | direct API auth / default model |
-| `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | cap output tokens |
-| `CLAUDE_CODE_MAX_THINKING_TOKENS` | extended-thinking budget override (prefer `--effort`) |
-| `MAX_STRUCTURED_OUTPUT_RETRIES` | retries when `--json-schema` validation fails |
-| `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE` | force transcript persistence in nested sessions (relevant: Codex-spawned claude counts as nested if markers leak through) |
-| `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` | max wait for background tasks in -p mode |
-| `BASH_MAX_TIMEOUT_MS` / `BASH_MAX_OUTPUT_LENGTH` | Bash tool limits inside Claude |
-| `API_TIMEOUT_MS` | API request timeout |
-| `CLAUDE_EFFORT` | env form of `--effort` |
-| `CLAUDE_CODE_SKIP_PROMPT_HISTORY` | any-mode equivalent of `--no-session-persistence` |
+Primary references: [CLI reference](https://code.claude.com/docs/en/cli-reference), [programmatic use](https://code.claude.com/docs/en/headless), [permissions](https://code.claude.com/docs/en/permissions), [models and effort](https://code.claude.com/docs/en/model-config), [sessions](https://code.claude.com/docs/en/sessions), [subagents](https://code.claude.com/docs/en/sub-agents).

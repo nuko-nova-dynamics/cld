@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 // cld runner: composes `claude -p --output-format json`, tees the full result
 // object to a scratch file, and prints a compact context-safe summary.
-// Contract: exit 0 only when claude exited 0 and reported a non-error result.
-import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+// Contract: exit 0 only for a terminal success result with a zero process exit.
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import { executeRun } from "./run-execution.mjs";
 
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
-// ro: read-only. Read/Grep/Glob need no permission in -p mode; everything else
-// is denied by default, so we only allow web reads and read-only shell.
+const FINAL_MESSAGE_LIMIT = 6000;
+// ro permits common read tools, uses default permission mode, and denies edit
+// tools. Bash allow patterns are not filesystem isolation.
 const RO_ALLOWED_TOOLS = [
   "WebFetch",
   "WebSearch",
@@ -17,13 +17,11 @@ const RO_ALLOWED_TOOLS = [
   "Bash(git log:*)",
   "Bash(git show:*)",
   "Bash(git status:*)",
-  "Bash(git branch:*)",
   "Bash(git blame:*)",
   "Bash(ls:*)",
   "Bash(cat:*)",
   "Bash(rg:*)",
   "Bash(grep:*)",
-  "Bash(find:*)",
   "Bash(head:*)",
   "Bash(tail:*)",
   "Bash(wc:*)",
@@ -133,26 +131,28 @@ const opts = parseArgs(process.argv.slice(2));
 if (!opts.sandbox) die("--sandbox is required (ro|write|full)");
 if (!["ro", "write", "full"].includes(opts.sandbox)) die(`invalid --sandbox: ${opts.sandbox}`);
 if (opts.effort && !EFFORTS.has(opts.effort)) die(`invalid --effort: ${opts.effort}`);
-if (opts.budget && !(Number(opts.budget) > 0)) die(`invalid --budget: ${opts.budget}`);
+if (opts.budget != null && !(Number.isFinite(Number(opts.budget)) && Number(opts.budget) > 0)) {
+  die(`invalid --budget: ${opts.budget}`);
+}
+for (const [flag, value] of [["--max-turns", opts.maxTurns], ["--schema-retries", opts.schemaRetries]]) {
+  if (value != null && (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))) {
+    die(`invalid ${flag}: ${value}`);
+  }
+}
+if (opts.ephemeral && opts.resume) die("--ephemeral cannot be used with --resume");
 const prompt = opts.promptParts.join(" ").trim();
 if (!prompt) die("a prompt is required (resume also needs a delta instruction)");
-
-const scratch = opts.scratch ?? mkdtempSync(path.join(tmpdir(), "cld-"));
-mkdirSync(scratch, { recursive: true });
-const resultPath = path.join(scratch, "result.json");
-const messagePath = path.join(scratch, "last-message.txt");
-const stderrPath = path.join(scratch, "stderr.log");
 
 const argv = ["-p", "--output-format", "json"];
 
 // Sandbox tiers (claude has no sandbox flag; permissions are the control):
-//   ro    -> nothing allowed beyond reads + read-only shell + web
+//   ro    -> default permission mode with common read tools and edit denials
 //   write -> auto-accept file edits, unrestricted shell
 //   full  -> bypass all permission checks (explicit user intent required)
 // --allow merges extra allowedTools into the tier's list; --deny always maps
-// to --disallowedTools (deny wins over allow in claude's permission system,
-// but is ignored under full's bypass).
+// to --disallowedTools. These presets are not OS isolation.
 if (opts.sandbox === "ro") {
+  argv.push("--permission-mode", "manual");
   argv.push("--allowedTools", opts.allow ? `${RO_ALLOWED_TOOLS},${opts.allow}` : RO_ALLOWED_TOOLS);
 } else if (opts.sandbox === "write") {
   argv.push("--permission-mode", "acceptEdits");
@@ -161,7 +161,8 @@ if (opts.sandbox === "ro") {
 } else {
   argv.push("--dangerously-skip-permissions");
 }
-if (opts.deny) argv.push("--disallowedTools", opts.deny);
+const deniedTools = [opts.sandbox === "ro" ? "Write,Edit,NotebookEdit" : null, opts.deny].filter(Boolean).join(",");
+if (deniedTools) argv.push("--disallowedTools", deniedTools);
 if (opts.tools != null) argv.push("--tools", opts.tools);
 
 if (opts.resume) {
@@ -195,7 +196,7 @@ if (opts.settingSources) argv.push("--setting-sources", opts.settingSources);
 for (const r of opts.raw) argv.push(r);
 
 if (opts.schema) {
-  // --json-schema takes inline JSON; read, validate, and minify the file.
+  // --json-schema takes inline JSON; parse and minify the file.
   let schemaRaw;
   try {
     schemaRaw = readFileSync(opts.schema, "utf8");
@@ -216,104 +217,99 @@ argv.push(prompt);
 const bin = process.env.CLD_CLAUDE_BIN || "claude";
 const childEnv = { ...process.env };
 if (opts.schemaRetries) childEnv.MAX_STRUCTURED_OUTPUT_RETRIES = opts.schemaRetries;
-const child = spawn(bin, argv, {
-  cwd: opts.cd || process.cwd(),
-  stdio: ["ignore", "pipe", "pipe"],
-  env: childEnv,
-});
+const context = {
+  model: opts.model ?? null,
+  effort: opts.effort ?? null,
+  sandbox: opts.sandbox,
+  sessionSelection: opts.resume === "last" ? "resume-last" : opts.resume ? "resume-id-or-name"
+    : opts.sessionId ? "new-session-id" : "new",
+  ephemeral: Boolean(opts.ephemeral),
+  budgetUsd: opts.budget == null ? null : Number(opts.budget),
+  maxTurns: opts.maxTurns == null ? null : Number(opts.maxTurns),
+  hasRawFlags: opts.raw.length > 0,
+  hasSettings: Boolean(opts.settings || opts.settingSources),
+  hasMcpConfig: opts.mcpConfigs.length > 0,
+  hasStrictMcpConfig: Boolean(opts.strictMcpConfig),
+  hasSystemPrompt: Boolean(opts.systemPrompt || opts.appendSystemPrompt),
+  hasAdditionalDirs: opts.addDirs.length > 0,
+  hasCustomToolSelection: opts.tools != null,
+  hasPermissionOverrides: Boolean(opts.allow || opts.deny),
+  hasFallbackModel: Boolean(opts.fallbackModel),
+  hasAgentConfig: Boolean(opts.agent || opts.agents),
+  hasWorktree: Boolean(opts.worktree),
+  hasBetas: Boolean(opts.betas),
+  hasSessionName: Boolean(opts.name),
+  hasSchemaRetries: Boolean(opts.schemaRetries),
+};
 
-let stdoutBuf = "";
-let stderrBuf = "";
-child.stdout.on("data", (buf) => {
-  stdoutBuf += buf.toString();
-});
-child.stderr.on("data", (buf) => {
-  stderrBuf += buf.toString();
-});
+let outcome;
+try {
+  outcome = await executeRun({
+    bin, argv, cwd: path.resolve(opts.cd || process.cwd()), env: childEnv,
+    scratchParent: opts.scratch, context, schemaRequested: Boolean(opts.schema),
+    onStart: ({ recordPath }) => process.stderr.write(`claude-run: run record: ${recordPath}\n`),
+  });
+} catch (err) {
+  process.stderr.write(`claude-run: execution failed: ${err.message}\n`);
+  process.exitCode = 1;
+}
 
-child.on("close", (code) => {
-  writeFileSync(stderrPath, stderrBuf);
-  // -p --output-format json emits one JSON object on stdout. With
-  // --raw --verbose it becomes an array of messages (the result object is the
-  // element with type "result"); with stream-json it's JSONL whose last line
-  // is the result. Handle all three.
-  let result = null;
-  try {
-    result = JSON.parse(stdoutBuf);
-  } catch {
-    for (const line of stdoutBuf.split("\n").reverse()) {
-      const t = line.trim();
-      if (!t.startsWith("{")) continue;
-      try {
-        result = JSON.parse(t);
-        break;
-      } catch {}
-    }
-  }
-  if (Array.isArray(result)) result = result.find((m) => m?.type === "result") ?? null;
-  writeFileSync(resultPath, result ? JSON.stringify(result, null, 2) : stdoutBuf);
-
-  const ok = code === 0 && result != null && result.is_error !== true;
+if (outcome) {
+  const { ok, result, finalMsg, exitCode, interruptedBy, hasStructuredOutput,
+    outputTooLarge, artifactError, spawnError, stderrTail,
+    runDir, resultPath, messagePath, stdoutPath, stderrPath, recordPath } = outcome;
   const lines = [];
   lines.push(`session: ${result?.session_id ?? "unknown"}`);
   lines.push(
-    `status: ${ok ? `completed (${result?.subtype ?? "success"})` : `failed (exit ${code}${result?.subtype ? `, ${result.subtype}` : ""})`}`
+    `status: ${ok ? `completed (${result?.subtype ?? "success"})` : `failed (exit ${exitCode}${result?.subtype ? `, ${result.subtype}` : ""})`}`
   );
+  if (interruptedBy) lines.push(`interrupted: ${interruptedBy}`);
   if (result?.num_turns != null) lines.push(`turns: ${result.num_turns}`);
+  if (result?.modelUsage && typeof result.modelUsage === "object") {
+    const models = Object.keys(result.modelUsage);
+    if (models.length) lines.push(`models: ${models.join(", ")}`);
+  }
   if (result?.usage) {
     const u = result.usage;
     const cached = (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
     lines.push(`tokens: input=${u.input_tokens ?? 0} cached=${cached} output=${u.output_tokens ?? 0}`);
   }
-  if (result?.total_cost_usd != null) lines.push(`cost: $${result.total_cost_usd.toFixed(4)}`);
+  if (Number.isFinite(result?.total_cost_usd)) lines.push(`cost: $${result.total_cost_usd.toFixed(4)}`);
   const denials = result?.permission_denials;
   if (Array.isArray(denials) && denials.length > 0) {
-    const names = [...new Set(denials.map((d) => d.tool_name ?? "unknown"))].join(", ");
-    lines.push(`permission denials: ${denials.length} (${names}) — escalate --sandbox tier if these blocked the task`);
+    const names = [...new Set(denials.map((d) => typeof d?.tool_name === "string" && d.tool_name ? d.tool_name : "unknown"))].join(", ");
+    lines.push(`permission denials: ${denials.length} (${names}); inspect the blocked operations and task authorization before changing permissions`);
   }
-  // With --json-schema the validated object lands in structured_output; the
-  // prose result stays in result. Claude Code can also finish "success" with
-  // no structured_output (observed 2.1.207) after its StructuredOutput tool
-  // rejects large payloads — salvage a fenced JSON block from the prose.
-  let finalMsg = null;
-  if (result?.structured_output !== undefined && result?.structured_output !== null) {
-    finalMsg = JSON.stringify(result.structured_output, null, 2);
-  } else if (typeof result?.result === "string") {
-    finalMsg = result.result;
-    if (opts.schema && finalMsg) {
-      const fenced = finalMsg.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
-      if (fenced) {
-        try {
-          finalMsg = JSON.stringify(JSON.parse(fenced[1]), null, 2);
-          lines.push("note: structured_output missing; salvaged fenced JSON from the prose result");
-        } catch {}
-      }
-    }
-  }
+  if (opts.schema && !hasStructuredOutput) lines.push("note: structured_output missing from terminal result");
+  if (outputTooLarge) lines.push("note: stdout exceeded the 16 MiB parse limit; the complete output is in stdout.log");
+  if (artifactError) lines.push(`note: ${artifactError.channel} artifact write failed: ${artifactError.message}`);
+  if (spawnError) lines.push(`note: failed to spawn ${bin}: ${spawnError.message}`);
   if (result?.subtype === "error_max_structured_output_retries") {
     lines.push(
-      "note: structured output failed but the session's WORK may be complete — inspect `git diff` before redoing anything."
+      "note: structured output failed; inspect workspace changes before repeating any task work."
     );
     lines.push(
-      `recover the report: --resume ${result?.session_id ?? "<id>"} --tools "" --schema <same> -- "Tools are disabled. Emit only the JSON report." (keep report fields concise)`
+      opts.ephemeral
+        ? "note: this ephemeral run cannot be resumed; recover from inspected artifacts in a new report-only run."
+        : `recover the report: --cd <original-project> --resume ${result?.session_id ?? "<id>"} --tools "" --strict-mcp-config --schema <same> -- "Report work already performed. Keep fields concise; do not repeat the task."`
     );
   }
-  if (finalMsg != null) writeFileSync(messagePath, finalMsg);
   lines.push("--- final message ---");
-  lines.push(finalMsg?.trim() || "(no final message)");
-  if (!ok && stderrBuf.trim()) {
+  const shownMessage = finalMsg?.trim() || "(no final message)";
+  lines.push(shownMessage.length > FINAL_MESSAGE_LIMIT
+    ? `${shownMessage.slice(0, FINAL_MESSAGE_LIMIT)}\n[truncated; full message in ${messagePath}]`
+    : shownMessage);
+  if (!ok && stderrTail) {
     lines.push("--- stderr tail ---");
-    lines.push(stderrBuf.trim().slice(-400));
+    lines.push(stderrTail);
   }
   lines.push("--- artifacts ---");
+  lines.push(`run: ${runDir}`);
+  lines.push(`record: ${recordPath}`);
   lines.push(`result: ${resultPath}`);
   lines.push(`last-message: ${messagePath}`);
+  lines.push(`stdout: ${stdoutPath}`);
   lines.push(`stderr: ${stderrPath}`);
   process.stdout.write(lines.join("\n") + "\n");
-  process.exit(ok ? 0 : 1);
-});
-
-child.on("error", (err) => {
-  process.stderr.write(`claude-run: failed to spawn ${bin}: ${err.message}\n`);
-  process.exit(1);
-});
+  process.exitCode = ok ? 0 : 1;
+}

@@ -1,166 +1,72 @@
 ---
 name: driving-claude
-description: Drive Anthropic's Claude Code CLI as a full collaborator — delegate tasks, run reviews, fan out parallel workers, resume sessions, and act on structured results. Use whenever the user mentions Claude in any form — "ask claude", "have/let claude do X", "send this to claude", "claude second opinion", "what does claude think", "delegate to claude", "claude review/fix/investigate", resuming or checking a Claude run, comparing Codex's work against Claude, or any request to run another coding agent on the task.
+description: Run and supervise Claude Code from Codex for delegated tasks, reviews, second opinions, parallel workers, or resumed Claude sessions. Use for requests to ask or delegate work to Claude; use prompting-claude for prompt design and migration research without a Claude run.
 ---
 
 # Driving Claude
 
-You are a full collaborator with Claude, not a forwarder. You choose the
-flags, you parse the results, you verify claims against the repo, you
-inspect and test what Claude changed, you iterate. The user should never
-need to know a single Claude flag.
+You own the outcome: choose the invocation, inspect the result, verify claims and changes, and continue authorized work when necessary.
 
 ## Invocation contract
 
-Every run goes through the bundled runner (never raw `claude -p` — the
-runner keeps output compact and context-safe, and enforces a permission
-tier). Run from the plugin root:
+Resolve the plugin root two directories above this file. Use an absolute runner path and explicitly set the task directory:
 
 ```bash
-node scripts/claude-run.mjs --sandbox <ro|write|full> [flags] -- <prompt>
+node <plugin-root>/scripts/claude-run.mjs --sandbox <ro|write|full> \
+  --cd <target-repo> [flags] -- <prompt>
 ```
 
-If your working directory is not the plugin root, resolve the plugin
-root first: it is two directories above this SKILL.md file.
+Schema and scratch paths resolve from the caller's directory, not `--cd`; use absolute paths. Preserve pre-existing changes. `--scratch` is a parent folder; the runner creates a unique child for each invocation. Retain the printed artifact paths.
 
-The runner prints: session id, status, turn count, token usage, cost,
-permission denials, the final message, and artifact paths (full result
-JSON, last message, stderr). It exits 0 only on a successful run.
+The runner invokes `claude -p --output-format json`, buffers output, and prints a bounded summary plus paths to the full result, final message, and stderr. It exits successfully only for a successful terminal result; schema runs also require Claude Code's `structured_output` field. Read the full message artifact when the summary is truncated. See [flag-map.md](references/flag-map.md) for the exact CLI mapping and limitations.
 
-The runner spawns the `claude` binary, which needs network access. If
-your shell environment blocks network or the spawn is denied, request
-escalated permissions for the command rather than silently degrading.
+Use the host's background-process support for long runs; poll process status without killing slow work. A silent runner is not evidence of a hang. If the host blocks network or execution, follow that host's approval path, not a broader Claude permission tier.
 
-Long tasks (> ~1 min): run the command in the background if your
-harness supports it, or raise the command timeout generously. Do not
-kill a run mid-flight just because it is slow — check the artifacts.
+## Select controls
 
-## Choosing flags (your job, never the user's)
+| Decision | Rule |
+|---|---|
+| Permission tier | `ro` for review/research, `write` for authorized edits, `full` only when the user explicitly authorized bypassing Claude permissions. Do not ask again if that authorization is already clear. |
+| Model | Preserve user choice/configuration. For deliberate selection, load the prompting reference. Pin a full ID for reproducible comparisons; aliases can change or be overridden. |
+| Effort | Supports `low`, `medium`, `high`, `xhigh`, `max`; leave configured when appropriate. Opus 5.5 starts at `medium`, Fable 5.1 at `high`. Use higher levels when evidence supports the cost. |
+| Schema | Use `--schema <absolute-file>` when consuming structured fields. Keep reports proportionate; schemas do not validate the truth of claims. |
+| Budget | `--budget <usd>` limits Claude Code's tracked spend; `--max-turns <n>` bounds turns. Neither proves task completion. Track cumulative spend across workers and resumes; allocate each new cap from the remaining task budget. Never silently reset or raise a user budget. |
+| Persistence | `--ephemeral` for disposable probes; otherwise retain the returned session ID and target directory. |
+| Tools | `--tools` selects built-ins; it does not remove MCP tools. `--allow` auto-approves matching tools; `--deny` adds deny rules. |
+| MCP | Reuse only relevant servers. `--strict-mcp-config` uses only explicitly supplied MCP configs; pair with `--tools ""` for no built-ins or MCP servers. |
+| Parallel writes | Prefer isolated worktrees. Otherwise assign disjoint files and avoid overlapping formatters, generated output, lockfiles, or Git operations. |
+| Passthrough | `--raw <arg>` passes each token verbatim. It can override runner choices; inspect effects before use. Interactive and stdin-driven modes do not work through this runner. |
 
-- **--sandbox** (required): `ro` for review/diagnosis/research/second
-  opinion — Claude can read files and run read-only shell (git
-  diff/log/show, ls, cat, rg, ...) but cannot write or execute anything
-  else. `write` for fix/implement/refactor (default for mutating asks)
-  — auto-accepts file edits and allows shell. `full` ONLY when the user
-  explicitly asks for unrestricted access (bypasses all permission
-  checks) — confirm once per session before first use.
-- **--model**: leave unset by default (the user's configured Claude
-  default, typically the strongest available). Aliases pass through:
-  `fable`, `opus`, `sonnet`. Use `sonnet` for quick/cheap probes.
-- **--effort**: `low|medium|high|xhigh|max`. Leave unset by default.
-  `xhigh`/`max` when the user signals hard ("really dig", "think hard",
-  gnarly bug). `low` for mechanical bulk edits and probes.
-- **--schema <path>**: add whenever you will ACT on the result rather
-  than just read it. Bundled schemas live at `schemas/` under the
-  plugin root: `review-findings.schema.json`, `verdict.schema.json`,
-  `task-report.schema.json`, `patch-plan.schema.json`. See the
-  claude-structured-output skill.
-- **--ephemeral**: throwaway probes that shouldn't persist a session
-  (they cannot be resumed).
-- **--budget <usd>**: hard dollar cap for a run. Use for open-ended
-  research runs or when the user mentions cost.
-- **--max-turns <n>**: cap agentic turns (run errors at the limit).
-  The other cost brake — good for probes and bounded checks.
-- **--add-dir <d>**: extra directories Claude may touch (repeatable).
-- **--cd <dir>**: working directory for the run (sessions are scoped
-  per directory — resume must use the same `--cd`).
-- **--append-system-prompt <s>**: inject a standing rule (house
-  style, banned APIs) — not personas.
-- **--allow <tools>** / **--deny <tools>**: merge extra allowed tools
-  into the sandbox tier / hard-deny specific tools (deny wins).
-- **--tools <list>**: restrict the built-in tool set itself
-  (`--tools ""` + `--schema` = pure structured extraction, no tools).
-- **--worktree <name>**: run in a fresh git worktree — the clean way
-  to let parallel write workers or A/B implementations coexist.
-- **--fallback-model <m,...>**: auto-retry on capacity errors.
-- **--agents <json>**: define ad-hoc subagents for Claude to use.
-- **--mcp-config <f>** / **--strict-mcp-config**: hand Claude extra
-  MCP servers for the run.
-- **--raw <arg>**: verbatim passthrough (repeatable) for any `claude`
-  flag the runner doesn't wrap — full surface, zero gaps.
+The name `--sandbox` is historical: these are Claude permission presets, not OS isolation. `ro` selects default permission mode, denies direct file edit tools, and pre-approves selected shell/read operations. Shell prefixes, inherited settings, hooks, MCP, extra allow rules, and raw flags can still permit effects. For a genuinely isolated review, use host-level read-only execution or provide captured source/diffs to a no-tools run. Do not promise that a permission preset prevents every write.
 
-## Sessions: resume and fork
+`--bare` is optional minimal startup, not isolation. It skips automatic discovery but can load explicit settings/plugins/MCP and skills from `--add-dir`; on the Anthropic API it requires API-key authentication rather than subscription OAuth. Do not add it blindly to a working login.
 
-- The runner prints `session: <uuid>` — remember it for the
-  conversation.
-- Follow-up on the same thread: `--resume <uuid> -- <delta
-  instruction>`. Send only the delta, not the whole original prompt.
-- "keep going" with exactly one recent thread in this directory:
-  `--resume last`.
-- Diverge without losing the original: add `--fork` to a resume.
-- Sessions are stored per working directory under
-  `~/.claude/projects/<slugified-cwd>/*.jsonl` — list by mtime to find
-  recent ones. See the claude-session skill.
+## Results and continuation
 
-## Fleet (parallel fan-out)
+1. Read exit status, terminal subtype, errors, permission denials, and artifacts. Read `run.json` for lifecycle status, cwd, and safe launch context. Retain required runtime options omitted from that record without copying credentials.
+2. For schema runs, parse `last-message.txt` only after success. Missing `structured_output` is failure; fenced prose is diagnostic data, not a validated result. The runner relies on Claude Code's schema validation; validate additional application constraints before acting.
+3. Inspect `modelUsage` in `result.json` for models that actually served the session. A requested model or a model's self-description does not establish attribution; multiple models alone do not establish the reason for fallback.
+4. Verify findings against current files. After edits, inspect the diff and relevant test evidence. Run any missing checks; avoid repeating already adequate checks without cause.
+5. Compare the result to the user's complete task. Resume specific unfinished work when authorized; do not declare completion from `status: completed` alone. Bound corrective resumes and report a concrete blocker when progress stops.
 
-For decomposed subtasks, multi-angle second opinions, or A/B
-implementations: launch N runner invocations concurrently, each with
-its own `--scratch` dir and (for mutating work) NON-OVERLAPPING file
-scopes stated in the prompt — or `--sandbox ro` angles that only
-report. Collect all outputs, then synthesize: agree/disagree, dedupe
-findings, pick the best implementation. 2–4 workers is the sweet spot.
-See the claude-fleet skill.
+## Failure routing
 
-## Background & cloud
+| Evidence | Next action |
+|---|---|
+| Missing/malformed terminal result or nonzero exit | Inspect stderr and result artifacts; do not treat partial output as success. |
+| `error_max_structured_output_retries` or missing structured output | Inspect the workspace before retrying. Work may have happened. Recover only the report with the same session and bounded output; see `claude-structured-output`. |
+| Permission denials | Identify the exact blocked operation. Keep read-only work read-only; use captured evidence or a narrowly authorized tool. Change to `write` only if the user authorized the mutation. |
+| Auth/billing/rate-limit failure | Diagnose that failure; changing models is not a general remedy. Use `claude-setup` for auth/install problems. |
+| Capacity/model availability failure | Retry within the task budget or use an authorized `--fallback-model` chain. State model changes and inspect usage. |
+| Budget/turn limit | Report completed and remaining work. Narrow the task or resume only within the user's authorized limits. |
 
-For work the user wants detached from this conversation: `claude --bg
-"<task>"` starts a background session (manage with `claude agents
---json`, `claude logs/stop/respawn <id>`); `claude --cloud "<task>"`
-creates a Claude Code web session on claude.ai; `claude --teleport`
-pulls a web session back to local. These bypass the runner contract —
-use them deliberately, report the session id, and don't wait on them.
+## Related workflows
 
-## Acting on results
+- `claude-task`: one delegated task.
+- `claude-review`: findings against a specific diff in the correct repository.
+- `claude-session`: resume/fork and restore launch configuration.
+- `claude-fleet`: independent workers and synthesis.
+- `claude-structured-output`: schema contracts and report recovery.
+- `claude-setup`: version, authentication, and a bounded smoke probe.
 
-- Parse schema output as JSON (it arrives as the final message and in
-  the `last-message.txt` artifact).
-- Verify substantive claims against the repo before presenting them —
-  any model can be confidently wrong. Findings you can't confirm get
-  labeled as unverified.
-- If the user asked for a fix and Claude wrote one (sandbox `write`),
-  inspect the diff (`git diff`), run the relevant tests, then report.
-- Never dump the full result JSON into the conversation.
-
-## Reviews
-
-Default review path: `--sandbox ro --schema
-schemas/review-findings.schema.json` with a prompt containing the diff
-context. See the claude-review skill for the template.
-
-## Failure handling
-
-- Non-zero exit: read the status line + stderr artifact. Common
-  signatures:
-  - `error_max_structured_output_retries` → the work usually finished;
-    only the JSON report failed (known Claude Code issue with large
-    payloads). Check `git diff`, then follow the runner's printed
-    recovery hint (resume with `--tools ""`). Don't redo the task.
-  - `permission denials: N (...)` in the summary → the sandbox tier
-    blocked tools the task needed. Escalate `ro` → `write` (or ask the
-    user about `full`) and re-run or resume.
-  - Long runs may auto-fallback mid-run (e.g. Fable 5 → Opus 4.8 —
-    documented behavior); `modelUsage` in the result artifact shows
-    every model that served the session. Attribute work accordingly.
-  - auth errors ("Invalid API key", OAuth/token expiry) → tell the user
-    to run `claude` interactively once to re-authenticate, or
-    `claude setup-token` for long-lived auth.
-  - "model overloaded" / capacity errors → retry with
-    `--model sonnet`.
-  - budget exceeded (subtype mentions budget) → raise `--budget` or
-    narrow the task.
-- Runner not found / `claude` missing → run the claude-setup skill
-  flow.
-
-## Safety
-
-- Never use `full` sandbox without explicit user intent + one
-  confirmation per session.
-- Mutating runs (`write`/`full`) must state their file scope in the
-  prompt; keep scopes disjoint across parallel workers.
-- Claude Code loads the target repo's CLAUDE.md and settings — treat
-  repo-level instructions as part of what you're invoking. Use
-  `--raw --bare` for a hermetic run with none of that loaded.
-
-Full verified flag reference:
-[references/flag-map.md](references/flag-map.md).
+Detached background/cloud sessions use a different lifecycle from the runner. Use them only when the task calls for detached or remote execution, verify current CLI support, and report the returned ID and management command. Starting one is not completing its task.

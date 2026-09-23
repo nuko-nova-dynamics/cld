@@ -1,78 +1,44 @@
 ---
 name: claude-structured-output
-description: Get machine-readable JSON out of Claude runs using --schema — pick a bundled schema (review-findings, verdict, task-report, patch-plan) or author an ad-hoc one. Use when a Claude result should be parsed and acted on rather than read as prose.
+description: Request and consume schema-backed Claude Code results with the bundled runner. Use for machine-parsed findings, verdicts, plans, task reports, or recovery when a final structured report fails.
 ---
 
-# Structured output from Claude
+# Structured Claude results
 
-The runner's `--schema <path>` flag reads a JSON Schema file and passes
-it to `claude --json-schema`, forcing the final result to validate
-against it. The validated object arrives in the result's
-`structured_output` field; the runner prints it as the final message
-and writes it to the `last-message.txt` artifact.
+`--schema <absolute-path>` parses a JSON Schema file and passes it to Claude Code's `--json-schema`. Claude Code validates the output; the runner requires a successful terminal result and a non-null `structured_output` field. It writes that field to `last-message.txt`. It does not run a separate JSON Schema validator.
 
-## Bundled schemas (`schemas/` under the plugin root)
+## Select a contract
 
-| Schema | Use for | Shape |
+| Bundled schema | Purpose | Required fields |
 |---|---|---|
-| `review-findings.schema.json` | code review | `{overall, findings[]: {file, line?, severity, summary, failure_scenario}}` |
-| `verdict.schema.json` | fact-check a claim | `{claim, verdict: confirmed\|refuted\|uncertain, evidence, confidence?}` |
-| `task-report.schema.json` | report after a mutating task | `{summary, files_changed[], commands_run[]?, risks[]?, follow_ups[]?}` |
-| `patch-plan.schema.json` | plan before edits | `{steps[]: {file, change, rationale?}, notes?}` |
+| `review-findings.schema.json` | Verified code findings | `overall`, `findings` with file, nullable line, severity, summary, failure scenario |
+| `verdict.schema.json` | Assess one claim | `claim`, `verdict`, `evidence`, nullable `confidence` |
+| `task-report.schema.json` | Report completed work and gaps | `summary`, `files_changed`, `commands_run`, `risks`, `follow_ups` |
+| `patch-plan.schema.json` | Describe proposed changes | `steps` with file, change, nullable rationale; nullable `notes` |
 
-## Ad-hoc schemas
+Schemas live under `<plugin-root>/schemas/`. The caller should parse the full artifact, not the console excerpt, which can be truncated. Verify substantive claims and application constraints before acting.
 
-Write the schema to a scratch file, then pass its path. Claude's
-`--json-schema` accepts standard JSON Schema (it does not require
-OpenAI strict mode), but keep schemas disciplined anyway — they double
-as the output contract:
+For an ad-hoc schema, keep its nesting and report length proportional to what the caller needs. Use categorical enums, descriptive fields, explicit required keys, and `additionalProperties: false`. Claude Code's schema support differs from the direct API's grammar-constrained `output_config.format`; do not assume arbitrary JSON Schema keywords are enforced. The CLI treats `format` as annotation, so validate dates, URLs, and other domain constraints in the consumer when correctness depends on them.
 
-- `additionalProperties: false` at every object level.
-- Prefer listing every key in `required`; express optionality with
-  nullable types (`"type": ["string", "null"]`).
-- Keep nesting shallow — arrays of flat objects.
-- Use `enum` for anything categorical.
-- Describe fields with `description` — Claude reads them.
+## Recover a report without replaying the task
 
-Keeping schemas strict-compatible means the same files work for both
-this plugin and its Codex-side mirror (cdx).
+On `error_max_structured_output_retries`, missing `structured_output`, or other failure:
 
-## Keep payloads bounded (known upstream failure)
-
-Claude Code's StructuredOutput validation can wrongly reject very
-large report payloads (observed on 2.1.207 after a 174-turn run:
-repeated `must have required property 'files_changed'` although the
-field was present; `terminal_reason: structured_output_retry_exhausted`).
-Defenses:
-
-- Don't attach schemas to very long mutating runs; ask for a prose
-  report, or recover the JSON afterwards (below).
-- When you do, instruct in the prompt: summary ≤ 1 short paragraph,
-  arrays ≤ ~30 short string entries.
-- `--schema-retries <n>` raises the validation retry budget
-  (`MAX_STRUCTURED_OUTPUT_RETRIES`).
-
-If a run ends `error_max_structured_output_retries`, the WORK is
-usually complete — check `git diff` first, then recover the report
-(verified recipe):
+1. Inspect the terminal result, stderr, workspace diff, and relevant artifacts. Report failure does not establish whether the underlying work finished.
+2. If the task work is complete and the session persists, request only a smaller report in the same project and with required launch configuration restored:
 
 ```bash
-node scripts/claude-run.mjs --sandbox ro --cd <same dir> \
-  --resume <session-id> --tools "" --schema <same file> \
-  -- "Tools are disabled. Emit only the JSON report. Keep fields concise."
+node <plugin-root>/scripts/claude-run.mjs --sandbox ro \
+  --cd <original-project> --resume <session-id> \
+  --tools "" --strict-mcp-config --schema <absolute-schema> \
+  -- "Return the report for work already performed. Do not repeat the task. Keep entries concise and mark anything you could not verify."
 ```
 
-`--tools ""` removes tool_use entirely so the model must answer in
-text. Note: resuming a huge session re-reads its full cached context —
-expect a nontrivial cost on 100+-turn sessions.
+3. Try report recovery once, then reassess the failure. Do not automatically increase retries or repeat an expensive mutating task. `--schema-retries <positive-integer>` is available when evidence supports a different retry budget.
+4. If recovery still fails, retain prose as diagnostic output and report the structured contract as failed. Do not promote fenced JSON to validated output.
 
-## Parsing
+`--tools ""` disables built-in tools; `--strict-mcp-config` without supplied configs removes MCP servers. Claude Code still owns its structured-output mechanism. Avoid saying this forces a text-only response or disables every hook or configuration effect.
 
-Parse the final message as JSON. The runner already salvages a fenced
-JSON block if Claude Code drops `structured_output` on an otherwise
-successful run (it prints a `note:` when it does). On parse failure
-treat the run as failed and retry once, appending "Return ONLY the
-JSON object." to the prompt.
+A large-report failure was observed on Claude Code 2.1.207 in this project's July history. Treat it as historical evidence, not proof that the same upstream defect exists on the installed version.
 
-Always verify substantive claims in parsed output against the repo
-before acting — schema conformance is not truth.
+Sources checked 2026-09-23: [CLI schema contract](https://code.claude.com/docs/en/cli-reference), [programmatic results](https://code.claude.com/docs/en/headless), [direct API structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs).

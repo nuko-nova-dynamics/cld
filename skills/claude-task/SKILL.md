@@ -1,28 +1,17 @@
 ---
 name: claude-task
-description: Delegate a task to Claude Code with full flag control (model, effort, sandbox, schema, resume, budget). Invoke explicitly with $claude-task, or use when the user asks to hand a specific task to Claude.
+description: Delegate one task to Claude Code, select the required model, effort, tools, and result contract, then verify and act on the result within the user's scope.
 ---
 
-# Delegate a task to Claude
+# Delegate a task
 
-Use the driving-claude skill's invocation contract. Delegate the user's
-task to Claude via the bundled runner (from the plugin root):
+Follow `driving-claude` for the invocation and result contract, and `prompting-claude` for substantial prompts.
 
 ```bash
-node scripts/claude-run.mjs --sandbox <ro|write|full> [flags] -- <prompt>
+node <plugin-root>/scripts/claude-run.mjs --sandbox <ro|write|full> \
+  --cd <target-project> [flags] -- <task-and-completion-criteria>
 ```
 
-Rules:
+Choose unset flags from the task and configured defaults. Use `ro` for assessment, `write` for authorized implementation, and `full` only for explicitly authorized permission bypass. Use absolute schema paths when the caller needs structured fields. Give each run a clear file scope and completion condition.
 
-- Any flag the user did not set: choose per the driving-claude
-  heuristics. Do not ask.
-- Mutating asks default to `--sandbox write`; review/research to `ro`;
-  `full` only on explicit user request, confirmed once per session.
-- If the result will be parsed and acted on, add `--schema
-  schemas/<name>.schema.json` (review-findings | verdict | task-report
-  | patch-plan) — a user-supplied path passes through.
-- `--resume` with no id from the user means `--resume last`.
-- Tighten the prompt per the prompting-claude skill before launching.
-- After the run: parse/verify/act per driving-claude "Acting on
-  results", then report outcome + session id so the thread can be
-  resumed later.
+After Claude returns, inspect the artifacts and actual workspace, verify the relevant checks, and complete any remaining authorized work. Preserve the session ID, target directory, model usage, and necessary launch flags so a follow-up can resume correctly. A successful process exit does not prove the task was completed.

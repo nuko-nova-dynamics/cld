@@ -1,36 +1,20 @@
 ---
 name: claude-review
-description: Have Claude Code review a diff, branch, or PR with schema-backed findings that get verified before reporting. Invoke explicitly with $claude-review, or use when the user wants Claude's code review or second opinion on changes.
+description: Have Claude Code review a specific diff, branch, or PR and independently verify its schema-backed findings before reporting them.
 ---
 
 # Claude code review
 
-Use the driving-claude skill's invocation contract. Review path:
-
-1. Determine the diff scope: uncommitted changes (`git diff` +
-   `git diff --staged`), a branch (`git diff <base>...HEAD`), or a
-   commit — whatever the user pointed at. Default: uncommitted, else
-   the current branch against the default branch.
-2. Launch the runner from the plugin root:
+Identify the target repository and diff before launching. Include both staged and unstaged changes for an uncommitted review, and inspect relevant untracked files separately. For a branch or PR, verify the actual base reference; do not assume `main` or use stale line numbers.
 
 ```bash
-node scripts/claude-run.mjs --sandbox ro \
-  --schema schemas/review-findings.schema.json \
-  -- "Review the following change for correctness bugs, security
-  issues, and significant quality problems. Repo: <path>. Scope:
-  <described diff scope, e.g. 'git diff main...HEAD'>. Run the diff
-  yourself with the read-only shell you have. For every finding cite
-  file and line and give a concrete failure scenario. Only report
-  findings you verified against the actual code — no speculation."
+node <plugin-root>/scripts/claude-run.mjs --sandbox ro \
+  --cd <target-repo> --schema <plugin-root>/schemas/review-findings.schema.json \
+  -- "Review <exact diff scope> for actionable correctness and security defects. The intended behavior is <intent>. Read the current code and obtain the diff in this repository. For each finding give file and line, the concrete failing input or state, and evidence supporting it. Do not edit files. Report no finding where the evidence does not support one."
 ```
 
-3. Parse the findings JSON. **Verify each finding against the repo
-   yourself** before reporting — read the cited file:line, confirm the
-   failure scenario is plausible. Drop or mark as unverified anything
-   that doesn't hold up.
-4. Report verified findings ranked by severity, with your
-   agree/disagree assessment and the session id.
+If Claude cannot run the needed read command, capture the diff/source through an authorized read-only tool and supply it. Do not escalate to write permissions just to complete a review.
 
-For a second opinion on YOUR own pending work, include your intent in
-the prompt ("the change is supposed to X") so Claude reviews against
-intent, not just the diff.
+Parse the full result artifact only after successful schema output. Independently inspect each cited location and failure scenario, remove unsupported findings, and rank confirmed issues by impact. Cite the current side of the diff and report anything that remains unverified. Include the session ID for follow-up.
+
+The `ro` preset is a permission configuration, not filesystem isolation. Follow `driving-claude` when the task requires stronger isolation.

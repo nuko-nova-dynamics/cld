@@ -1,80 +1,76 @@
-# cld — Claude for Codex
+# cld: Claude for Codex
 
-Full-surface Claude Code integration for Codex: delegate, review, fan
-out, resume, and act on structured Claude results. Codex drives the
-`claude` CLI directly through a context-safe bundled runner — no
-middleman runtime.
+Codex delegates tasks to Claude Code through a bundled Node runner, then checks the results. The skills are instructions for the calling agent: choose controls, run Claude in the right project, inspect artifacts, verify the work, and resume when needed.
 
-The inverse of [cdx](https://github.com/nuko-nova-dynamics/cdx) (which
-lets Claude Code drive Codex).
+The inverse of [cdx](https://github.com/nuko-nova-dynamics/cdx), which lets Claude Code drive Codex.
 
-## What you get
+## Skills
 
-| Skill | Purpose |
+| Skill | Use |
 |---|---|
-| `driving-claude` | The brain: invocation contract, flag heuristics, sessions, fleet, verification. Auto-triggers on any "ask/have/let Claude…" request |
-| `claude-task` | Delegate one task with full flag control |
-| `claude-review` | Schema-backed code review with verified findings |
-| `claude-fleet` | 2–4 parallel Claude workers (decomposition, angles, A/B) |
-| `claude-session` | List, resume, fork Claude sessions |
-| `claude-setup` | Health-check install/auth/runner |
-| `prompting-claude` | How to prompt Claude models well |
-| `claude-structured-output` | `--schema` patterns + bundled schemas |
+| `driving-claude` | Invocation, controls, results, failure routing |
+| `claude-task` | One delegated task |
+| `claude-review` | Findings against a specific diff |
+| `claude-fleet` | Independent workers and synthesis |
+| `claude-session` | Resume, fork, and restore launch configuration |
+| `claude-setup` | Diagnose installation, auth, and runner failures |
+| `prompting-claude` | Compose prompts and select model-specific guidance |
+| `claude-structured-output` | Consume schema results and recover failed reports |
 
-Invoke explicitly with `$` in Codex (e.g. `$claude-review`) or just
-describe the task ("get a second opinion from Claude on this diff").
+Use `$claude-review` in Codex or describe the task, such as “get Claude's opinion on this diff.” The [model reference](skills/prompting-claude/references/models-and-migration.md) covers Opus 5.5, Fable 5.1, Sonnet 5, and direct API migration. Its recommendations are dated and distinct from measured results.
 
-## Requirements
+## Requirements and installation
 
-- [Claude Code](https://claude.com/claude-code) CLI installed and
-  authenticated (`claude` on PATH; run it once interactively to log
-  in). Verified against Claude Code 2.1.207.
-- Node.js (for the bundled runner).
-- Codex ≥ 0.144 / ChatGPT desktop app with plugins.
+- Authenticated [Claude Code](https://code.claude.com/docs/en/setup) on PATH. This refresh inspected version 2.1.280.
+- Node.js for the runner and tests.
+- Codex with plugin support.
 
-## Install
-
-### ChatGPT desktop app
-
-Add the Nuko Nova marketplace and install:
+Install from the Nuko Nova marketplace:
 
 ```bash
 codex plugin marketplace add nuko-nova-dynamics/marketplace
 codex plugin add cld@nuko-nova-tools
 ```
 
-Then restart the ChatGPT desktop app; `cld` appears under **Plugins**.
-Bundled skills load in new Codex chats and CLI sessions.
+For an existing installation, refresh the catalog first with `codex plugin marketplace upgrade nuko-nova-tools`, then run the add command. Open a new Codex task after updating so its skills reload.
 
-## How it works
-
-Every delegation goes through `scripts/claude-run.mjs`, which wraps
-`claude -p --output-format json` and prints a compact summary (session
-id, status, tokens, cost, permission denials, final message) plus
-artifact paths for the full result. Permission tiers:
-
-| Tier | Claude permissions |
-|---|---|
-| `--sandbox ro` | read files + read-only shell (git diff/log/…, ls, cat, rg) + web; nothing else |
-| `--sandbox write` | auto-accepted file edits + shell |
-| `--sandbox full` | `--dangerously-skip-permissions` (explicit user intent only) |
-
-`--sandbox full` gives the delegated Claude process unrestricted command and
-filesystem access and bypasses its normal permission prompts. Use it only after
-an explicit request, in a trusted workspace, and with the exact task and target
-reviewed. Prefer `ro` for inspection and `write` for ordinary implementation.
-
-Structured output: `--schema <file>` forces the result to validate
-against a JSON Schema (bundled: review-findings, verdict, task-report,
-patch-plan). Any `claude` flag the runner doesn't wrap passes through
-verbatim with `--raw <arg>`. Full verified reference:
-[skills/driving-claude/references/flag-map.md](skills/driving-claude/references/flag-map.md).
-
-## Smoke test
+## Runner contract
 
 ```bash
-node tests/smoke.mjs   # runs 3 cheap live probes against claude (costs a few cents)
+node /path/to/cld/scripts/claude-run.mjs --sandbox ro \
+  --cd /path/to/target-repo \
+  --schema /path/to/cld/schemas/review-findings.schema.json \
+  -- "Review the current diff for actionable defects. Do not edit. Cite source evidence."
 ```
+
+The runner prints status, session ID, model usage, token/cost estimates, permission denials, and a bounded final-message excerpt. Each run saves raw stdout/stderr, its terminal result, final message, and a `run.json` lifecycle record. The record retains safe launch context; it does not copy prompts, raw flags, inline settings, or environment values. Raw provider output may still contain sensitive content. Exit zero requires a successful terminal result; `--schema` also requires Claude Code's `structured_output`. The runner relies on Claude Code for schema validation and does not treat JSON recovered from prose as validated.
+
+| Preset | Behavior |
+|---|---|
+| `ro` | Default permission mode, direct file-edit tools denied, selected read/shell operations pre-approved |
+| `write` | File edits accepted and shell pre-approved |
+| `full` | Claude permission bypass, requiring explicit user authorization |
+
+The historical `--sandbox` name describes permission presets, not filesystem isolation. Inherited configuration, hooks, shell operations, MCP servers, extra allowances, and raw flags affect what can run. See the [flag map](skills/driving-claude/references/flag-map.md) before extending permissions.
+
+Use absolute runner/schema paths and an explicit target `--cd`. On resume, restore required launch flags. Output is written to artifact files as it arrives; the console prints its final summary on exit. Parsing is capped at 16 MiB of stdout: larger output fails explicitly while the raw file remains available. SIGINT and SIGTERM are forwarded to Claude, with forced shutdown after five seconds. Interrupted runs exit nonzero and save available artifacts. POSIX cancellation targets the owned process group; Windows cancellation targets the direct child. `--scratch` now selects a parent folder: every call creates a unique `cld-run-*` child. Use the printed artifact paths instead of assuming files sit directly under the supplied parent. This prevents concurrent workers from replacing each other's results.
+
+## Verification
+
+```bash
+node --test tests/runner.test.mjs
+node tests/smoke.mjs
+```
+
+Offline tests use real fake-CLI processes and cover terminal results, schema presence, permissions, cancellation, concurrent artifact isolation, incremental files, parse limits, and secret exclusion from run metadata. GitHub Actions runs them on Linux and macOS. Live smoke tests consume account usage, run plain/schema/verbose probes, and preserve their artifacts. Each probe sets a $0.50 Claude Code budget and a five-turn limit; those controls are not billing guarantees. To probe a specific model:
+
+```bash
+CLD_SMOKE_MODEL=claude-opus-5-5 node tests/smoke.mjs
+```
+
+The [run ownership decision](docs/adr/0001-run-ownership.md) describes the execution module and its limits.
+
+The [September research record](docs/research-2026-09-23.md) lists sources, decisions, and validation limits.
 
 ## License
 

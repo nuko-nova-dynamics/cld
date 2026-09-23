@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 (2026-09-23)
+
+- Refresh all eight agent skills against current Anthropic prompting, model migration, and Claude Code documentation. Add dated Opus 5.5, Fable 5.1, and Sonnet 5 guidance with source links and evaluation rules.
+- Make the target working directory explicit, restore required launch flags on resume, and distinguish completed turns from completed tasks. Replace automatic permission escalation and blanket maximum-effort guidance.
+- Correct permission and bare-mode claims. Read-only presets now select default mode and deny direct file-edit tools; remove broad git-branch and find allowances. These presets remain distinct from OS isolation.
+- Require a successful terminal result and canonical structured output for schema runs. Preserve diagnostic prose without promoting fenced JSON, report actual model usage, bound console output, replace stale artifacts, and retain spawn errors.
+- Forward SIGINT/SIGTERM to Claude, force shutdown after five seconds, and save available artifacts with a failed outcome after interruption. Preserve split UTF-8 output and tolerate malformed cost/denial metadata.
+- Add one execution module that owns the process, incremental output files, bounded parsing, and an atomic run record. Each invocation allocates its own artifact directory. `--scratch` now selects a parent folder; consumers must follow returned paths.
+- Add offline process tests and bounded live probes, with automatic Linux/macOS regression checks. Integration checks do not establish comparative model quality.
+
 ## 0.1.0 (2026-07-11)
 
 - Initial release: Codex plugin that orchestrates Claude Code.
