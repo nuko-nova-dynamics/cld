@@ -212,7 +212,10 @@ if (opts.schema) {
   argv.push("--json-schema", JSON.stringify(schemaObj));
 }
 
-argv.push(prompt);
+// "--" ends option parsing. Claude's list flags (--allowedTools, --disallowedTools,
+// --tools, --add-dir, --mcp-config, --betas) take every following word, so without it
+// the read-only preset's --disallowedTools swallowed the prompt ("Input must be provided").
+argv.push("--", prompt);
 
 const bin = process.env.CLD_CLAUDE_BIN || "claude";
 const childEnv = { ...process.env };

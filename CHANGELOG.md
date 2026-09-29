@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1 (2026-09-29)
+
+- Pass the prompt after `--`. Claude's list flags (`--allowedTools`, `--disallowedTools`, `--tools`, `--add-dir`, `--mcp-config`, `--betas`) take every following word, so the `--sandbox ro` preset's `--disallowedTools` consumed the prompt and every read-only run failed with "Input must be provided either through stdin or as a prompt argument". Prompts that begin with a dash are now passed intact too. Verified against Claude Code 2.1.284.
+
 ## 0.3.0 (2026-09-23)
 
 - Refresh all eight agent skills against current Anthropic prompting, model migration, and Claude Code documentation. Add dated Opus 5.5, Fable 5.1, and Sonnet 5 guidance with source links and evaluation rules.

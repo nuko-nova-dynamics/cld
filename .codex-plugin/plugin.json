@@ -1,6 +1,6 @@
 {
   "name": "cld",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Agent skills for delegating tasks, reviews, parallel workers, and resumable sessions to Claude Code, with verified structured results.",
   "author": {
     "name": "Nuko Nova Dynamics",
