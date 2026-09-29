@@ -189,6 +189,14 @@ test("read-only arguments reject edits and show models used", () => {
   assert.ok(argv.includes("--verbose"));
 });
 
+test("the prompt follows -- so list flags cannot consume it", () => {
+  const res = run(success, ["--add-dir", dir]);
+  assert.equal(res.status, 0);
+  const argv = res.argv();
+  assert.deepEqual(argv.slice(-2), ["--", "test prompt"]);
+  assert.ok(argv.indexOf("--disallowedTools") < argv.indexOf("--"));
+});
+
 test("console truncation preserves the complete message artifact", () => {
   const longMessage = "x".repeat(8000);
   const res = run({ ...success, result: longMessage });
